@@ -10,11 +10,11 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.v2ray.ang"
+        applicationId = "com.hamidesigns.scorpionvpn"
         minSdk = 24
         targetSdk = 37
-        versionCode = 749
-        versionName = "2.3.9"
+        versionCode = 758
+        versionName = "1.4.0"
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {

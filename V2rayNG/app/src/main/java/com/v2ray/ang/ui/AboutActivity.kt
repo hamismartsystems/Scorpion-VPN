@@ -31,7 +31,9 @@ import com.v2ray.ang.AppConfig
 import com.v2ray.ang.BuildConfig
 import com.v2ray.ang.R
 import com.v2ray.ang.core.CoreNativeManager
+import com.v2ray.ang.scorpion.ScorpionManager
 import com.v2ray.ang.ui.base.BaseComponentActivity
+import com.v2ray.ang.ui.checkupdate.CheckUpdateActivity
 import com.v2ray.ang.ui.compose.AppTopBar
 import com.v2ray.ang.ui.compose.NavigationBarsSpacer
 import com.v2ray.ang.ui.compose.SettingsMenuItem
@@ -82,10 +84,43 @@ fun AboutScreen(
                 .padding(innerPadding)
                 .verticalScroll(rememberScrollState())
         ) {
+            // ── Scorpion VPN brand header ─────────────────────────────
+            Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)) {
+                Text(
+                    text = stringResource(R.string.app_name),
+                    style = MaterialTheme.typography.headlineMedium
+                )
+                Text(
+                    text = "A HAMI SMART SYSTEMS product",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    text = "hamidesigns.shop  •  Support & updates",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    text = "Version ${BuildConfig.VERSION_NAME}    |    Xray core: $libVersion",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+            }
+
+            SettingsMenuItem(
+                icon = painterResource(R.drawable.ic_check_update_24dp),
+                title = "Check for updates (app & core)",
+                onClick = {
+                    context.startActivity(Intent(context, CheckUpdateActivity::class.java))
+                }
+            )
             SettingsMenuItem(
                 icon = painterResource(R.drawable.ic_source_code_24dp),
-                title = stringResource(R.string.title_source_code),
-                onClick = { Utils.openUri(context, AppConfig.APP_URL) }
+                title = "Website & support",
+                onClick = { Utils.openUri(context, "https://hamidesigns.shop") }
+            )
+            SettingsMenuItem(
+                icon = painterResource(R.drawable.ic_source_code_24dp),
+                title = stringResource(R.string.acc_add),
+                onClick = { Utils.openUri(context, ScorpionManager.CONFIG_PAGE_URL) }
             )
             SettingsMenuItem(
                 icon = painterResource(R.drawable.license_24px),
@@ -99,8 +134,8 @@ fun AboutScreen(
             )
             SettingsMenuItem(
                 icon = painterResource(R.drawable.ic_feedback_24dp),
-                title = stringResource(R.string.title_pref_feedback),
-                onClick = { Utils.openUri(context, AppConfig.APP_ISSUES_URL) }
+                title = "Scorpion support",
+                onClick = { Utils.openUri(context, "https://hamidesigns.shop") }
             )
             SettingsMenuItem(
                 icon = painterResource(R.drawable.ic_telegram_24dp),
@@ -109,8 +144,8 @@ fun AboutScreen(
             )
             SettingsMenuItem(
                 icon = painterResource(R.drawable.ic_privacy_24dp),
-                title = stringResource(R.string.title_privacy_policy),
-                onClick = { Utils.openUri(context, AppConfig.APP_PRIVACY_POLICY) }
+                title = "Setup & configuration guide",
+                onClick = { Utils.openUri(context, ScorpionManager.CONFIG_PAGE_URL) }
             )
             VersionInfoBlock(
                 versionText = versionText,
