@@ -18,6 +18,7 @@ import com.v2ray.ang.fmt.ShadowsocksFmt
 import com.v2ray.ang.fmt.SocksFmt
 import com.v2ray.ang.fmt.TrojanFmt
 import com.v2ray.ang.fmt.V2rayNFmt
+import com.v2ray.ang.fmt.ScorpionFmt
 import com.v2ray.ang.fmt.VlessFmt
 import com.v2ray.ang.fmt.VmessFmt
 import com.v2ray.ang.fmt.WireguardFmt
@@ -45,6 +46,7 @@ object AngConfigManager {
             AppConfig.SOCKS5 to SocksFmt::parse,
             EConfigType.TROJAN.protocolScheme to TrojanFmt::parse,
             EConfigType.VLESS.protocolScheme to VlessFmt::parse,
+            "scorpion://" to ScorpionFmt::parse,
             EConfigType.WIREGUARD.protocolScheme to WireguardFmt::parse,
             EConfigType.HYSTERIA2.protocolScheme to Hysteria2Fmt::parse,
             AppConfig.HY2 to Hysteria2Fmt::parse,
