@@ -106,8 +106,9 @@ val colorPing = Color(0xFF009966) // Green
 val colorPingRed = Color(0xFFFF0099) // Pink Red
 val colorConfigType = Color(0xFFf97910) // Orange
 val colorFabActive = Color(0xFF00A86B) // Scorpion brand green (#00A86B)
-val colorFabInactiveLight = Color(0xFF00A86B) // Scorpion brand green (#00A86B)
-val colorFabInactiveDark = Color(0xFF00A86B) // Scorpion brand green (#00A86B)
+val colorFabInactiveLight = Color.White // white when disconnected
+val colorFabInactiveDark = Color.White // white when disconnected
+val colorFabIconInactive = Color(0xFF00A86B) // brand green play icon on white FAB
 val dividerColorLight = Color(0xFFE0E0E0) // Light Gray
 val dividerColorDark = Color(0xFF424242) // Dark Gray
 
