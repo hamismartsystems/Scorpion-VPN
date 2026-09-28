@@ -14,7 +14,7 @@
 | پلتفرم | فایل | نسخه |
 |---|---|---|
 | 🪟 ویندوز | `ScorpionVPN-Setup-1.4.0.exe` (نصب‌کننده) | 1.4.0 ✅ |
-| 🤖 اندروید | `ScorpionVPN-1.4.0-arm64-v8a.apk` | 1.4.0 ✅ |
+| 🤖 اندروید | [`ScorpionVPN-1.4.3-arm64-v8a.apk`](https://github.com/hamismartsystems/Scorpion-VPN/releases/download/v1.4.3/ScorpionVPN-1.4.3-arm64-v8a.apk) | 1.4.3 ✅ |
 | 🍎 مک | `ScorpionVPN-macOS-1.3.3.zip` (بتا — Python 3.10+) | 1.3.3 ✅ |
 | 🐧 لینوکس | `ScorpionVPN-Linux-1.3.3.tar.gz` (Python 3.10+) | 1.3.3 ✅ |
 | 📱 iOS | — | 🛠 به‌زودی |
