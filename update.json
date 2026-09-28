@@ -6,11 +6,11 @@
     "android": {
       "name": "Scorpion VPN",
       "package": "com.hamidesigns.scorpionvpn",
-      "latest": "1.4.2",
-      "url": "https://github.com/hamismartsystems/Scorpion-VPN/releases/download/v1.4.2/ScorpionVPN-1.4.2-arm64-v8a.apk",
-      "sha256": "fe36d13b220e4ae117bf3d785248159530bb817bff9783919901f4c5b3d32e40",
-      "size": 41622943,
-      "notes": "1.4.2: بازگشت دورکرد خودکار اپ‌های ایرانی از تونل مانند 1.3.5 — در اولین اجرا، اپ‌های ایرانی (ir.* و بازار، اسنپ، تپسی، دیوار، آپارات، بانک‌ها و…) به‌صورت خودکار در مسیر مستقیم تیک می‌خورند. پاک‌سازی یک‌بارهٔ رول‌های geosite:ir. نصب روی نسخهٔ 1.3.5 به دلیل تغییر امضا ممکن نیست؛ قدیمی را حذف کنید.",
+      "latest": "1.4.3",
+      "url": "https://github.com/hamismartsystems/Scorpion-VPN/releases/download/v1.4.3/ScorpionVPN-1.4.3-arm64-v8a.apk",
+      "sha256": "b61db57bc71a374ae48fb832698fdcd57464f5a271c0160f450d587d1d0ffa87",
+      "size": 41623323,
+      "notes": "1.4.3: دکمهٔ اتصال در حالت قطع سفید و موقع اتصال سبز می‌شود؛ لوگوی منو در تم تیره درست شد؛ آیکون نوار وضعیت حالا «S» اسکورپیون است (به‌جای V). شامل بازگشت دورکرد خودکار اپ‌های ایرانی مثل 1.3.5.",
       "mandatory": false
     },
     "windows": {
