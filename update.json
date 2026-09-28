@@ -6,11 +6,11 @@
     "android": {
       "name": "Scorpion VPN",
       "package": "com.hamidesigns.scorpionvpn",
-      "latest": "1.4.0",
-      "url": "https://github.com/hamismartsystems/Scorpion-VPN/releases/download/v1.4.0/ScorpionVPN-1.4.0-arm64-v8a.apk",
-      "sha256": "114af677df8566db65a7a94e75940395cc51937a8618840f04159c2af48bc8ca",
-      "size": 41621175,
-      "notes": "1.4.0: کانال چک/دریافت آپدیت به ریپوی گیت‌هاب منتقل شد؛ رفع کرش geosite:ir؛ صفحه About برند اسکورپین. توجه: به دلیل تغییر امضا، نسخهٔ قدیمی را حذف و نسخهٔ جدید را نصب کنید.",
+      "latest": "1.4.1",
+      "url": "https://github.com/hamismartsystems/Scorpion-VPN/releases/download/v1.4.1/ScorpionVPN-1.4.1-arm64-v8a.apk",
+      "sha256": "d5404307dee5290f619090d240a57e0630098489587c527b0301f927cc1237b7",
+      "size": 41621155,
+      "notes": "1.4.1: دکمهٔ اتصال سبز برند (#00A86B) — حل مشکل سفید شدن آیکون در تم دارک (حذف monochrome). نصب روی نسخهٔ ۱.۳.۵ به دلیل تغییر امضا ممکن نیست؛ قدیمی را حذف کنید.",
       "mandatory": false
     },
     "windows": {
