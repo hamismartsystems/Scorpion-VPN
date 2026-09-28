@@ -8,15 +8,18 @@
 
 ## ⬇️ دانلود
 
-از صفحهٔ ریلیزها دانلود کنید: **[Releases](https://github.com/hamismartsystems/Scorpion-VPN/releases/latest)**
+- صفحهٔ دانلود فارسی سایت: **[hamidesigns.shop/apps](https://hamidesigns.shop/apps/)**
+- ریلیزها: **[GitHub Releases](https://github.com/hamismartsystems/Scorpion-VPN/releases/latest)**
 
-| پلتفرم | فایل | وضعیت |
+| پلتفرم | فایل | نسخه |
 |---|---|---|
-| 🪟 ویندوز | `ScorpionVPN-Setup.exe` (نصب‌کننده) | ✅ |
-| 🤖 اندروید | `ScorpionVPN-*-arm64.apk` | ✅ |
-| 🐧 لینوکس | — | 🛠 به‌زودی |
-| 🍎 مک | — | 🛠 به‌زودی |
+| 🪟 ویندوز | `ScorpionVPN-Setup-1.4.0.exe` (نصب‌کننده) | 1.4.0 ✅ |
+| 🤖 اندروید | `ScorpionVPN-1.3.5-arm64-v8a.apk` | 1.3.5 ✅ |
+| 🍎 مک | `ScorpionVPN-macOS-1.3.3.zip` (بتا — Python 3.10+) | 1.3.3 ✅ |
+| 🐧 لینوکس | `ScorpionVPN-Linux-1.3.3.tar.gz` (Python 3.10+) | 1.3.3 ✅ |
 | 📱 iOS | — | 🛠 به‌زودی |
+
+> به‌روزرسانی خودکار اپ اندروید به همین ریپو متصل می‌شود — ریلیز جدید = پیشنهاد آپدیت داخل اپ.
 
 ## ✨ ویژگی‌ها
 
@@ -27,15 +30,9 @@
 - 🖥 نصب‌کنندهٔ ویندوز با آیکون در تسک‌بار، تایتل‌بار و شورتکات‌ها
 - 🤖 اندروید: فورک تخصصی v2rayNG (GPL-3.0) + لایهٔ اسکورپین
 
-## 🚀 نصب و استفاده
-
-**ویندوز:** نصب‌کننده را دانلود و نصب کنید، برنامه را باز کنید، لینک `scorpion://...` را وارد کنید و Connect.
-
-**اندروید:** فایل APK را دانلود و روی گوشی نصب کنید (نصب از منابع ناشناس فعال باشد)، کانفیگ را وارد کنید و Connect.
-
 ## 🛠 سورس
 
-- **اندروید:** همین ریپازیتوری — فورک v2rayNG به‌همراه لایهٔ اسکورپین (`V2rayNG/…/fmt/`)؛ راهنمای بیلد: [v2rayNG README](https://github.com/2dust/v2rayNG)
+- **اندروید:** همین ریپازیتوری — فورک v2rayNG + لایهٔ اسکورپین
 - **ویندوز:** پوشهٔ [`windows/`](windows) — پایتون + PyInstaller + Inno Setup
 - ساخت کانفیگ اسکورپین (فقط صاحب سرور): `python windows/scorpion_config.py "vless://..."`
 
