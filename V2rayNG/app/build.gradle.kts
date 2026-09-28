@@ -13,8 +13,8 @@ android {
         applicationId = "com.hamidesigns.scorpionvpn"
         minSdk = 24
         targetSdk = 37
-        versionCode = 759
-        versionName = "1.4.1"
+        versionCode = 760
+        versionName = "1.4.2"
 
         val abiFilterList = (properties["ABI_FILTERS"] as? String)?.split(';')
         splits {

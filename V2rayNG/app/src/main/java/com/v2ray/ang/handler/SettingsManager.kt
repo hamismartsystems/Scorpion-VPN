@@ -41,6 +41,7 @@ object SettingsManager {
         ensureDefaultSettings()
         //ensureDefaultSubscription()
         initRoutingRulesets(context)
+        IranDirect.seed(context)
         migrateServerListToSubscriptions()
         migrateHysteria2PinSHA256()
     }
@@ -63,7 +64,7 @@ object SettingsManager {
      * @param type The routing preset type.
      * @return A mutable list of RulesetItem.
      */
-    private fun getPresetRoutingRulesets(context: Context, type: RoutingType = RoutingType.WHITE): MutableList<RulesetItem>? {
+    private fun getPresetRoutingRulesets(context: Context, type: RoutingType = RoutingType.WHITE_IRAN): MutableList<RulesetItem>? {
         val assets = Utils.readTextFromAssets(context, type.fileName)
         if (TextUtils.isEmpty(assets)) {
             return null
