@@ -4,9 +4,15 @@ Scorpion VPN — کلاینت ویندوز (تک‌فایل)
 طراحی حرفه‌ای تاریک + پشتیبانی کانفیگ‌های استاندارد و اختصاصی scorpion://
 
 اجرا:  pip install PyQt6 cryptography  +  xray.exe کنار همین فایل
-آیکون: scorpion_icon.png کنار همین فایل (اختیاری)
+آیکون نوار وظیفه از scorpion.ico (BMP) و منبع داخل exe می‌آید، نه از کش ویندوز.
 """
 import os, sys, json, base64, hashlib, subprocess, tempfile, socket, time
+try:
+    import scorpion_update as supd
+except Exception:
+    supd = None
+from scorpion_i18n import tr, set_lang, LANG
+from scorpion_sub import config_key, merge_subscription
 
 # ───────────────────────── ۱) قالب اختصاصی scorpion:// ─────────────────────────
 MAGIC = "scorpion://v1."
@@ -38,10 +44,10 @@ def encode_scorpion(plain):
 def decode_scorpion(uri):
     uri = uri.strip()
     if not is_scorpion(uri):
-        raise ValueError("این یک کانفیگ Scorpion نیست")
+        raise ValueError(tr("not_scorpion"))
     raw = base64.urlsafe_b64decode(uri[len(MAGIC):])
     if len(raw) < 13:
-        raise ValueError("قالب نامعتبر")
+        raise ValueError(tr("bad_format"))
     return AESGCM(_key()).decrypt(raw[:12], raw[12:], None).decode("utf-8")
 
 
@@ -57,7 +63,7 @@ def _b64json(s):
 def parse_uri(uri):
     uri = uri.strip()
     if "://" not in uri:
-        raise ValueError("قالب ناشناخته")
+        raise ValueError(tr("unknown_format"))
     scheme, rest = uri.split("://", 1)
     scheme = scheme.lower()
     if scheme == "vless":
@@ -102,7 +108,7 @@ def parse_uri(uri):
             q = dict(up.parse_qsl(qs))
         host, _, port = hp.partition(":")
         return scheme, frag, {"password": auth, "host": host, "port": int(port or 443), "params": q}
-    raise ValueError("پروتکل پشتیبانی نمی‌شود: " + scheme)
+    raise ValueError(tr("proto_unsup", scheme))
 
 
 def _outbound(scheme, d):
@@ -146,7 +152,7 @@ def _outbound(scheme, d):
                 "password": d["password"]}]},
                 "streamSettings": {"network": "tcp", "security": "tls",
                 "tlsSettings": {"serverName": q.get("sni", d["host"]), "allowInsecure": False}}}
-    raise ValueError("پروتکل پشتیبانی نمی‌شود")
+    raise ValueError(tr("proto_unsup2"))
 
 
 def build_client_config(uri, socks_port=10808, http_port=10809, opts=None):
@@ -173,10 +179,35 @@ def build_client_config(uri, socks_port=10808, http_port=10809, opts=None):
 
 # ───────────────────────── ۳) هسته ─────────────────────────
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-XRAY_PATH = os.path.join(APP_DIR, "xray.exe") if os.name == "nt" else "xray"
-ICON_PATH = os.path.join(APP_DIR, "scorpion_icon.png")
-ICO_PATH = os.path.join(APP_DIR, "scorpion.ico")
+
+
+def _bundle_dir():
+    """پوشه‌ای که PyInstaller فایل‌های --add-data را آنجا می‌گذارد (_internal)."""
+    d = getattr(sys, "_MEIPASS", None)
+    return d if d and os.path.isdir(d) else APP_DIR
+
+
+def _app_dir():
+    """پوشهٔ خود exe (یا اسکریپت در حالت توسعه)."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return APP_DIR
+
+
+def resource_path(name):
+    """مسیر فایل همراه برنامه؛ هم داخل _internal و هم کنار exe را می‌گردد."""
+    for base in (_bundle_dir(), _app_dir(), APP_DIR, os.path.join(_app_dir(), "_internal")):
+        p = os.path.join(base, name)
+        if os.path.exists(p):
+            return p
+    return os.path.join(_bundle_dir(), name)
+
+
+XRAY_PATH = resource_path("xray.exe") if os.name == "nt" else resource_path("xray")
+ICON_PATH = resource_path("scorpion_icon.png")
+ICO_PATH = resource_path("scorpion.ico")
 CONFIGS_FILE = os.path.join(APP_DIR, "scorpion_configs.json")
+SUBS_FILE = os.path.join(os.path.dirname(CONFIGS_FILE), "scorpion_subs.json")
 SETTINGS_FILE = os.path.join(APP_DIR, "scorpion_settings.json")
 
 
@@ -200,7 +231,13 @@ def describe(uri):
         sub = f"{proto} / {str(net).upper()}" + (f" / {str(sec).upper()}" if sec and sec != "none" else "")
         return name, sub, sc
     except Exception:
-        return ("کانفیگ اسکورپیون" if sc else uri[:20]), "نامعتبر", sc
+        return (tr("cfg_scorpion") if sc else uri[:20]), tr("invalid"), sc
+
+
+def fmt_time(secs):
+    """ثانیه → HH:MM:SS"""
+    secs = max(0, int(secs))
+    return "%02d:%02d:%02d" % (secs // 3600, (secs % 3600) // 60, secs % 60)
 
 
 def load_settings():
@@ -212,18 +249,50 @@ def load_settings():
 
 
 def set_system_proxy(on, server="127.0.0.1:10809"):
-    if os.name != "nt":
+    host, port = "127.0.0.1", "10809"
+    if ":" in str(server):
+        host, port = server.rsplit(":", 1)
+    if os.name == "nt":
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+                                 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 1 if on else 0)
+            if on:
+                winreg.SetValueEx(key, "ProxyServer", 0, winreg.REG_SZ, server)
+            winreg.CloseKey(key)
+        except OSError:
+            pass
         return
+    import platform, shutil
+    sysname = platform.system()
     try:
-        import winreg
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-                             r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
-                             0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(key, "ProxyEnable", 0, winreg.REG_DWORD, 1 if on else 0)
-        if on:
-            winreg.SetValueEx(key, "ProxyServer", 0, winreg.REG_SZ, server)
-        winreg.CloseKey(key)
-    except OSError:
+        if sysname == "Darwin" and shutil.which("networksetup"):
+            out = subprocess.check_output(["networksetup", "-listallnetworkservices"], text=True, errors="replace")
+            services = [ln.strip() for ln in out.splitlines()[1:] if ln.strip() and not ln.startswith("*")]
+            for svc in services:
+                if on:
+                    subprocess.call(["networksetup", "-setwebproxy", svc, host, str(port)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.call(["networksetup", "-setsecurewebproxy", svc, host, str(port)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.call(["networksetup", "-setsocksfirewallproxy", svc, "127.0.0.1", "10808"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    subprocess.call(["networksetup", "-setwebproxystate", svc, "off"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.call(["networksetup", "-setsecurewebproxystate", svc, "off"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.call(["networksetup", "-setsocksfirewallproxystate", svc, "off"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        if shutil.which("gsettings"):
+            if on:
+                subprocess.call(["gsettings", "set", "org.gnome.system.proxy", "mode", "manual"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.call(["gsettings", "set", "org.gnome.system.proxy.http", "host", host], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.call(["gsettings", "set", "org.gnome.system.proxy.http", "port", str(int(port))], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.call(["gsettings", "set", "org.gnome.system.proxy.https", "host", host], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.call(["gsettings", "set", "org.gnome.system.proxy.https", "port", str(int(port))], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.call(["gsettings", "set", "org.gnome.system.proxy.socks", "host", "127.0.0.1"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.call(["gsettings", "set", "org.gnome.system.proxy.socks", "port", "10808"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                subprocess.call(["gsettings", "set", "org.gnome.system.proxy", "mode", "none"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
         pass
 
 
@@ -231,11 +300,11 @@ def set_system_proxy(on, server="127.0.0.1:10809"):
 import math
 import urllib.request as ureq
 from PyQt6.QtGui import QFont, QIcon, QPainter, QColor, QPen, QPainterPath, QPalette
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize, QRectF, QPointF
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QSize, QRectF, QPointF
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QLabel, QLineEdit, QPushButton, QListWidget, QListWidgetItem,
                              QTextEdit, QMessageBox, QStackedWidget, QSpinBox, QCheckBox,
-                             QDialog, QMenu, QScrollArea, QComboBox)
+                             QDialog, QMenu, QScrollArea, QComboBox, QInputDialog)
 
 ACCENT = "#00e07a"
 BG = "#0f1115"
@@ -266,7 +335,17 @@ QLabel#sub{color:%(sb)s;font-size:11px;letter-spacing:1px;}
 QLabel#cname{font-size:13px;font-weight:600;}
 QLabel#name{font-size:15px;font-weight:600;}
 QLabel#ping{color:%(sb)s;font-size:13px;font-weight:600;}
+QLabel#timer{color:%(ac)s;font-family:Consolas,monospace;font-size:19px;font-weight:bold;letter-spacing:2px;background:transparent;}
+QWidget#notify{background:#12241b;border:1px solid %(ac)s;border-radius:10px;}
+QLabel#notify{color:%(ac)s;font-size:12px;font-weight:600;background:transparent;}
 QLabel#pinfo{color:#5f6a7c;font-size:11px;}
+QLabel#cd{color:%(ac)s;font-family:Consolas,monospace;font-size:12px;font-weight:bold;background:transparent;}
+QLabel#aboutbody{color:%(sb)s;font-size:12px;}
+QLabel#aboutnotify{color:%(ac)s;border:1px solid %(ac)s;background:#12241b;border-radius:10px;padding:10px 14px;font-size:12px;font-weight:600;}
+QSpinBox::up-button{subcontrol-origin:border;subcontrol-position:top right;width:18px;border:none;}
+QSpinBox::down-button{subcontrol-origin:border;subcontrol-position:bottom right;width:18px;border:none;}
+QSpinBox::up-arrow{width:9px;height:7px;}
+QSpinBox::down-arrow{width:9px;height:7px;}
 QLabel#rtitle{font-size:13px;}
 QLabel#sec{color:%(sb)s;font-size:12px;font-weight:600;}
 QWidget#row{border-bottom:1px solid #1a2029;}
@@ -388,6 +467,7 @@ class PowerButton(QWidget):
         super().__init__()
         self.connected = False
         self._hover = False
+        self.timer_text = ""
         self.setFixedSize(190, 190)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet("background:transparent;")
@@ -424,9 +504,23 @@ class PowerButton(QWidget):
         pen = QPen(QColor(ACCENT) if self.connected else QColor(TEXT), 5,
                    Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
         p.setPen(pen)
-        r = 30
-        p.drawArc(QRectF(cx - r, cy - r + 4, 2 * r, 2 * r), 120 * 16, 300 * 16)
-        p.drawLine(int(cx), int(cy - r - 8), int(cx), int(cy - 6))
+        if self.connected:
+            # حالت متصل: آیکون کوچک + وضعیت + شمارندهٔ زمان اتصال — وسط دکمه
+            r = 22
+            iy = cy - 40
+            p.drawArc(QRectF(cx - r, iy - r + 3, 2 * r, 2 * r), 120 * 16, 300 * 16)
+            p.drawLine(int(cx), int(iy - r - 6), int(cx), int(iy - r - 4))
+            p.setPen(QColor(TEXT))
+            p.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+            p.drawText(QRectF(0, cy - 12, w, 20), Qt.AlignmentFlag.AlignCenter, tr("connected"))
+            p.setPen(QColor(ACCENT))
+            p.setFont(QFont("Consolas", 17, QFont.Weight.Bold))
+            p.drawText(QRectF(0, cy + 12, w, 28), Qt.AlignmentFlag.AlignCenter,
+                       self.timer_text or "00:00:00")
+        else:
+            r = 30
+            p.drawArc(QRectF(cx - r, cy - r + 4, 2 * r, 2 * r), 120 * 16, 300 * 16)
+            p.drawLine(int(cx), int(cy - r - 8), int(cx), int(cy - 6))
 
 
 class ServerCard(QWidget):
@@ -477,18 +571,18 @@ class ServerCard(QWidget):
 class AddDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("افزودن کانفیگ / ساب‌کریپشن")
+        self.setWindowTitle(tr("add_title"))
         self.setFixedSize(540, 360)
         v = QVBoxLayout(self)
-        t = QLabel("هر خط یک کانفیگ (vless/vmess/ss/trojan/scorpion://)\nلینک http/https به‌عنوان ساب‌کریپشن دریافت و همه‌ی کانفیگ‌های آن اضافه می‌شود.")
+        t = QLabel(tr("add_hint"))
         t.setWordWrap(True)
         t.setStyleSheet("color:%s;background:transparent;" % SUB)
         self.txt = QTextEdit()
         self.txt.setStyleSheet("background:%s;border:1px solid %s;border-radius:10px;padding:8px;font-family:Consolas,monospace;" % (CARD, BORDER))
         row = QHBoxLayout()
-        ok = QPushButton("افزودن")
+        ok = QPushButton(tr("add"))
         ok.setObjectName("flat")
-        cancel = QPushButton("انصراف")
+        cancel = QPushButton(tr("cancel"))
         cancel.setObjectName("danger")
         row.addStretch()
         row.addWidget(ok)
@@ -520,6 +614,52 @@ class PingWorker(QThread):
             self.done.emit(int((time.time() - t) * 1000))
         except Exception:
             self.done.emit(-1)
+
+
+class UpdateWorker(QThread):
+    """کارهای شبکه‌ای بروزرسانی: بررسی / دانلود — تا رابط گرافیکی قفل نشود"""
+    done = pyqtSignal(str, str)     # (نوع، متن نتیجه/JSON)
+    prog = pyqtSignal(int, str)     # (درصد، توضیح)
+
+    def __init__(self, kind, payload=None):
+        super().__init__()
+        self.kind = kind
+        self.payload = payload or {}
+
+    def run(self):
+        if supd is None:
+            self.done.emit(self.kind, "NO_MODULE")
+            return
+        try:
+            if self.kind == "check_app":
+                m = supd.fetch_manifest()
+                info = supd.app_update(m)
+                self.done.emit("check_app", json.dumps(info, ensure_ascii=False) if info else "")
+
+            elif self.kind == "check_core":
+                m = supd.fetch_manifest()
+                cur = supd.xray_version(XRAY_PATH)
+                info = supd.core_update(m, cur)
+                self.done.emit("check_core", json.dumps({"current": cur, "info": info}, ensure_ascii=False))
+
+            elif self.kind == "dl_app":
+                info = self.payload.get("info", {})
+                def _p(pct, done, total):
+                    self.prog.emit(pct, tr("dl_app_pct", pct))
+                path = supd.download_installer(info, progress=_p)
+                self.done.emit("dl_app", path)
+
+            elif self.kind == "dl_core":
+                info = self.payload.get("info", {})
+                def _p2(pct, done, total):
+                    self.prog.emit(pct, tr("dl_core_pct", pct))
+                backup = supd.download_and_install_core(info, APP_DIR, progress=_p2)
+                self.done.emit("dl_core", str(backup or ""))
+
+            else:
+                self.done.emit(self.kind, "UNKNOWN")
+        except Exception as e:
+            self.done.emit(self.kind, "ERR:" + str(e))
 
 
 class Switch(QPushButton):
@@ -573,7 +713,7 @@ class Row(QWidget):
 class PortsDialog(QDialog):
     def __init__(self, socks, http, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("پورت‌های پروکسی محلی")
+        self.setWindowTitle(tr("ports_title"))
         self.setFixedSize(330, 170)
         v = QVBoxLayout(self)
         v.setSpacing(12)
@@ -590,12 +730,55 @@ class PortsDialog(QDialog):
         self.sp_http.setValue(http)
         r1.addWidget(self.sp_http)
         r1.addStretch()
-        save = QPushButton("ذخیره")
+        save = QPushButton(tr("save"))
         save.setObjectName("flat")
         save.clicked.connect(self.accept)
         v.addLayout(r1)
         v.addStretch()
         v.addWidget(save, 0, Qt.AlignmentFlag.AlignLeft)
+
+
+class QTimerSetDialog(QDialog):
+    def __init__(self, parent=None, current_secs=0):
+        super().__init__(parent)
+        self.setWindowTitle(tr("timer_title"))
+        self.setFixedSize(430, 200)
+        v = QVBoxLayout(self)
+        v.setSpacing(14)
+        t = QLabel(tr("timer_hint"))
+        t.setWordWrap(True)
+        t.setStyleSheet("color:%s;background:transparent;" % SUB)
+        r = QHBoxLayout()
+        r.addWidget(QLabel(tr("hours")))
+        self.sp_h = QSpinBox()
+        self.sp_h.setRange(0, 24)
+        self.sp_h.setMinimumWidth(95)
+        self.sp_h.setValue(min(24, int(current_secs // 3600)))
+        r.addWidget(self.sp_h)
+        r.addSpacing(18)
+        r.addWidget(QLabel(tr("minutes")))
+        self.sp_m = QSpinBox()
+        self.sp_m.setRange(0, 59)
+        self.sp_m.setMinimumWidth(95)
+        self.sp_m.setValue(int((current_secs % 3600) // 60))
+        r.addWidget(self.sp_m)
+        r.addStretch()
+        v.addWidget(t)
+        v.addLayout(r)
+        r2 = QHBoxLayout()
+        ok = QPushButton("Set")
+        ok.setObjectName("flat")
+        ok.clicked.connect(self.accept)
+        cancel = QPushButton(tr("cancel"))
+        cancel.setObjectName("danger")
+        cancel.clicked.connect(self.reject)
+        r2.addStretch()
+        r2.addWidget(cancel)
+        r2.addWidget(ok)
+        v.addLayout(r2)
+
+    def seconds(self):
+        return self.sp_h.value() * 3600 + self.sp_m.value() * 60
 
 
 class SubWorker(QThread):
@@ -607,9 +790,10 @@ class SubWorker(QThread):
 
     def run(self):
         out, errs = [], 0
+        self.per_url = {}
         for u in self.urls:
             try:
-                req = ureq.Request(u, headers={"User-Agent": "ScorpionVPN/1.0"})
+                req = ureq.Request(u, headers={"User-Agent": "ScorpionVPN/1.4.0"})
                 with ureq.urlopen(req, timeout=20) as r:
                     data = r.read()
                 try:
@@ -626,26 +810,223 @@ class SubWorker(QThread):
                     except Exception:
                         pass
                 lines = [l.strip() for l in cand.splitlines() if "://" in l.strip()]
+                self.per_url[u] = lines
                 if lines:
                     out += lines
                 else:
                     errs += 1
             except OSError:
+                self.per_url[u] = []
                 errs += 1
         self.done.emit(out, errs)
+
+
+
+class AboutDialog(QDialog):
+    """About — completely in English + Check for Update + Auto update"""
+
+    def __init__(self, win):
+        super().__init__(win)
+        self.win = win
+        self.setWindowTitle("About")
+        self.setFixedSize(480, 470)
+        v = QVBoxLayout(self)
+        v.setContentsMargins(26, 22, 26, 22)
+        v.setSpacing(14)
+
+        head = QHBoxLayout()
+        head.addWidget(IconWidget("shield", ACCENT, 36, 2.2))
+        head.addSpacing(12)
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        t = QLabel("Scorpion VPN  %s" % (supd.APP_VERSION if supd else "1.4.0"))
+        t.setObjectName("title")
+        s = QLabel("A HAMI SMART SYSTEMS product")
+        s.setObjectName("sub")
+        col.addWidget(t)
+        col.addWidget(s)
+        head.addLayout(col, 1)
+        v.addLayout(head)
+
+        core = ""
+        try:
+            core = supd.xray_version(XRAY_PATH) if supd else ""
+        except Exception:
+            core = ""
+        body = QLabel(
+            "Version: %s    |    Xray core: %s\n\n"
+            "hamidesigns.shop\n"
+            "Telegram support: t.me/Hami_Smart_Systems\n\n"
+            "Supports VLESS / VMESS / Shadowsocks / Trojan\n"
+            "Subscriptions & custom scorpion:// configs\n\n"
+            "All rights to this software belong to the\nHAMISMARTSYSTEMS brand."
+            % ((supd.APP_VERSION if supd else "1.4.0"), core or "unknown"))
+        body.setObjectName("aboutbody")
+        v.addWidget(body)
+
+        self.cb_auto = QCheckBox("Auto update (weekly check & install)")
+        self.cb_auto.setChecked(bool(win.settings.get("auto_update")))
+        self.cb_auto.toggled.connect(self._on_auto)
+        v.addWidget(self.cb_auto)
+
+        row = QHBoxLayout()
+        self.check_btn = QPushButton("Check for Update")
+        self.check_btn.setObjectName("flat")
+        self.check_btn.clicked.connect(lambda: self.win.check_app_update(manual=True))
+        row.addWidget(self.check_btn)
+        row.addStretch()
+        v.addLayout(row)
+
+        self.notify = QLabel("")
+        self.notify.setObjectName("aboutnotify")
+        self.notify.setWordWrap(True)
+        self.notify.hide()
+        v.addWidget(self.notify)
+
+        ok = QPushButton("OK")
+        ok.setObjectName("flat")
+        ok.clicked.connect(self.accept)
+        v.addWidget(ok, 0, Qt.AlignmentFlag.AlignHCenter)
+        self.refresh_notify()
+
+    def _on_auto(self, on):
+        self.win.settings["auto_update"] = bool(on)
+        try:
+            self.win.sw_autoupd.blockSignals(True)
+            self.win.sw_autoupd.setChecked(bool(on))
+            self.win.sw_autoupd.blockSignals(False)
+            self.win._save_opts()
+        except Exception:
+            pass
+
+    def refresh_notify(self):
+        info = self.win.pending_app_update
+        if info and not self.win.settings.get("auto_update"):
+            self.notify.setText("New version %s is available — click "
+                                 "“Check for Update” to install it." % info.get("latest"))
+            self.notify.show()
+        else:
+            self.notify.hide()
+
+
+def app_icon():
+    """آیکون پنجره — ریشه‌ای فیکس برای تسک‌بار ویندوز.
+
+    مشکل قبلی: QIcon(sys.executable) گاهی null برمی‌گرداند یا PNG به HICON تبدیل نمی‌شود.
+    راه‌حل: همه مسیرها را امتحان کن + از QPixmap هم بساز تا هیچ‌وقت خالی نماند.
+    """
+    from PyQt6.QtGui import QPixmap
+    candidates = []
+    # 1) exe خودش (آیکون embed شده)
+    if os.name == "nt" and getattr(sys, "frozen", False) and os.path.isfile(sys.executable):
+        candidates.append(sys.executable)
+    # 2) ico کنار exe / داخل _internal / bundle
+    for p in [ICO_PATH, ICON_PATH, resource_path("scorpion.ico"), resource_path("scorpion_icon.png"),
+              os.path.join(APP_DIR, "scorpion.ico"), os.path.join(APP_DIR, "scorpion_icon.png"),
+              os.path.join(_app_dir(), "scorpion.ico"), os.path.join(_app_dir(), "_internal", "scorpion.ico")]:
+        if p and os.path.exists(p):
+            candidates.append(p)
+
+    for path in candidates:
+        try:
+            ic = QIcon(path)
+            if not ic.isNull():
+                # تست کن pixmap هم بدهد
+                pm = ic.pixmap(32, 32)
+                if not pm.isNull():
+                    return ic
+        except Exception:
+            pass
+        # fallback از QPixmap
+        try:
+            if path.lower().endswith(('.png', '.ico')):
+                pm = QPixmap(path)
+                if not pm.isNull():
+                    return QIcon(pm)
+        except Exception:
+            pass
+
+    # آخرین تلاش: اگر هیچ فایلی نبود، یه آیکون ساده بساز تا تسک‌بار خالی نماند
+    try:
+        pm = QPixmap(64, 64)
+        pm.fill(QColor("#0B6623"))
+        return QIcon(pm)
+    except Exception:
+        return QIcon()
+
+
+def _set_windows_taskbar_icon(hwnd, ico_path=None):
+    """ویندوز: WM_SETICON با LoadImageW تا تسک‌بار حتماً آیکون بگیرد — ریشه‌ای."""
+    if os.name != "nt" or not hwnd:
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        # مسیر ico
+        if not ico_path or not os.path.exists(ico_path):
+            for cand in [ICO_PATH, resource_path("scorpion.ico"), os.path.join(APP_DIR, "scorpion.ico"),
+                         os.path.join(_app_dir(), "scorpion.ico"), os.path.join(_app_dir(), "_internal", "scorpion.ico")]:
+                if cand and os.path.exists(cand):
+                    ico_path = cand
+                    break
+        if not ico_path or not os.path.exists(ico_path):
+            return False
+
+        user32 = ctypes.windll.user32
+        # IMAGE_ICON=1, LR_LOADFROMFILE=0x10, LR_DEFAULTSIZE=0x40
+        hicon_big = user32.LoadImageW(None, ico_path, 1, 0, 0, 0x10 | 0x40)
+        hicon_small = user32.LoadImageW(None, ico_path, 1, 16, 16, 0x10)
+        if not hicon_big:
+            hicon_big = user32.LoadImageW(None, ico_path, 1, 32, 32, 0x10)
+        WM_SETICON = 0x80
+        ICON_SMALL = 0
+        ICON_BIG = 1
+        if hicon_small:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+        if hicon_big:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+        return bool(hicon_big or hicon_small)
+    except Exception:
+        return False
 
 
 class ScorpionVPN(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Scorpion VPN  1.0")
+        self.setWindowTitle("Scorpion VPN  %s" % (supd.APP_VERSION if supd else "1.4.0"))
         self.resize(1040, 680)
         self.setMinimumSize(880, 580)
-        if os.path.exists(ICON_PATH):
-            self.setWindowIcon(QIcon(ICON_PATH))
+        # ریشه‌ای: همیشه آیکون ست کن، حتی fallback
+        self._icon = app_icon()
+        try:
+            if not self._icon.isNull():
+                self.setWindowIcon(self._icon)
+            else:
+                # آخرین تلاش
+                self.setWindowIcon(QIcon(ICO_PATH if os.path.exists(ICO_PATH) else ICON_PATH))
+        except Exception:
+            pass
+        # تسک‌بار ویندوز را بعد از ساخته شدن hwnd ست کن
+        if os.name == "nt":
+            QTimer.singleShot(200, self._apply_taskbar_icon)
+            QTimer.singleShot(800, self._apply_taskbar_icon)
+
         self.proc = None
+        self.connected_uri = None
         self.configs = []
         self.settings = load_settings()
+        set_lang(self.settings.get("language") or "en")
+        # ── تایمر اتصال / شمارندهٔ قطع خودکار ──
+        self.conn_start = 0.0
+        self.countdown_end = 0.0
+        self.auto_off_secs = int(self.settings.get("auto_off", 0) or 0)
+        self.conn_timer = QTimer(self)
+        self.conn_timer.setInterval(1000)
+        self.conn_timer.timeout.connect(self._tick_conn)
+        self.about_dlg = None
+        # ── وضعیت بروزرسانی ──
+        self.pending_app_update = None
+        self._upd_manual = False
         self.socks_port = int(self.settings.get("socks_port", 10808))
         self.http_port = int(self.settings.get("http_port", 10809))
 
@@ -671,10 +1052,10 @@ class ScorpionVPN(QMainWindow):
         sv.addWidget(logo_holder)
         sv.addSpacing(12)
 
-        self.nav_servers = NavBtn("globe", "سرورها")
+        self.nav_servers = NavBtn("globe", tr("nav_servers"))
         self.nav_servers.setChecked(True)
-        self.nav_settings = NavBtn("gear", "تنظیمات")
-        self.nav_about = NavBtn("info", "درباره", checkable=False)
+        self.nav_settings = NavBtn("gear", tr("nav_settings"))
+        self.nav_about = NavBtn("info", tr("nav_about"), checkable=False)
         for b in (self.nav_servers, self.nav_settings, self.nav_about):
             sv.addWidget(b)
         sv.addStretch()
@@ -687,14 +1068,10 @@ class ScorpionVPN(QMainWindow):
         mv.setSpacing(14)
 
         head = QHBoxLayout()
-        self.page_title = QLabel("سرورها")
+        self.page_title = QLabel(tr("nav_servers"))
         self.page_title.setObjectName("title")
-        self.chip = QLabel("قطع")
-        self.chip.setObjectName("chipOff")
-        self.chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
         head.addWidget(self.page_title)
         head.addStretch()
-        head.addWidget(self.chip)
         mv.addLayout(head)
 
         self.pages = QStackedWidget()
@@ -704,12 +1081,65 @@ class ScorpionVPN(QMainWindow):
         self.pages.addWidget(self._build_servers_page())
         self.pages.addWidget(self._build_settings_page())
 
-        self.nav_servers.clicked.connect(lambda: self._goto(0, "سرورها"))
-        self.nav_settings.clicked.connect(lambda: self._goto(1, "تنظیمات"))
+        self.nav_servers.clicked.connect(lambda: self._goto(0, tr("nav_servers")))
+        self.nav_settings.clicked.connect(lambda: self._goto(1, tr("nav_settings")))
         self.nav_about.clicked.connect(self._about)
 
         self.load_configs()
         self.refresh_list()
+
+        # بررسی هفتگی بروزرسانی (هر ۷ روز یک‌بار، پس از راه‌اندازی)
+        try:
+            if time.time() - float(self.settings.get("last_update_check", 0)) > 7 * 86400:
+                self.check_app_update(manual=False)
+        except Exception:
+            pass
+
+    def _apply_taskbar_icon(self):
+        """ریشه‌ای: hwnd ویندوز را بگیر و WM_SETICON بفرست تا تسک‌بار خالی نماند."""
+        if os.name != "nt":
+            return
+        try:
+            hwnd = int(self.winId())
+            if hwnd:
+                _set_windows_taskbar_icon(hwnd, ICO_PATH)
+        except Exception:
+            pass
+        try:
+            if hasattr(self, '_icon') and not self._icon.isNull():
+                self.setWindowIcon(self._icon)
+        except Exception:
+            pass
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if os.name == "nt":
+            QTimer.singleShot(100, self._apply_taskbar_icon)
+            QTimer.singleShot(500, self._apply_taskbar_icon)
+
+    def _on_language(self, idx):
+        code = "fa" if idx == 1 else "en"
+        if (self.settings.get("language") or "en") == code:
+            return
+        self.settings["language"] = code
+        set_lang(code)
+        self._save_opts()
+        self.apply_language()
+        QMessageBox.information(self, "Scorpion VPN", tr("lang_restart"))
+
+    def apply_language(self):
+        self.nav_servers.setToolTip(tr("nav_servers"))
+        self.nav_settings.setToolTip(tr("nav_settings"))
+        self.nav_about.setToolTip(tr("nav_about"))
+        self.page_title.setText(tr("nav_servers") if self.pages.currentIndex() == 0 else tr("nav_settings"))
+        self.search.setPlaceholderText(tr("search"))
+        self.add_btn.setText(tr("add"))
+        self.refresh_btn.setText(tr("refresh_sub"))
+        self.ping_btn.setText(tr("ping"))
+        self.cb_live.setText(tr("sys_proxy"))
+        if not self.configs:
+            self.cur_name.setText(tr("no_server"))
+        self.power.update()
 
     def _goto(self, idx, title):
         self.pages.setCurrentIndex(idx)
@@ -730,13 +1160,17 @@ class ScorpionVPN(QMainWindow):
         top.setSpacing(10)
         self.search = QLineEdit()
         self.search.setObjectName("search")
-        self.search.setPlaceholderText("جست‌وجوی سرور...")
+        self.search.setPlaceholderText(tr("search"))
         self.search.textChanged.connect(self.refresh_list)
-        add = QPushButton("افزودن")
-        add.setObjectName("flat")
-        add.clicked.connect(self.open_add)
+        self.add_btn = QPushButton(tr("add"))
+        self.add_btn.setObjectName("flat")
+        self.add_btn.clicked.connect(self.open_add)
+        self.refresh_btn = QPushButton(tr("refresh_sub"))
+        self.refresh_btn.setObjectName("flat")
+        self.refresh_btn.clicked.connect(self.refresh_subs)
         top.addWidget(self.search, 1)
-        top.addWidget(add)
+        top.addWidget(self.refresh_btn)
+        top.addWidget(self.add_btn)
         left.addLayout(top)
 
         self.lst = QListWidget()
@@ -757,9 +1191,21 @@ class ScorpionVPN(QMainWindow):
         self.power = PowerButton()
         self.power.clicked.connect(self.toggle)
         rv.addWidget(self.power, 0, Qt.AlignmentFlag.AlignHCenter)
-        rv.addSpacing(6)
+        rv.addSpacing(2)
 
-        self.cur_name = QLabel("سروری انتخاب نشده")
+        set_btn = QPushButton("Set")
+        set_btn.setObjectName("flat")
+        set_btn.setFixedWidth(64)
+        set_btn.setToolTip(tr("auto_off_tip"))
+        set_btn.clicked.connect(self.open_timer_set)
+        srow = QHBoxLayout()
+        srow.addStretch()
+        srow.addWidget(set_btn)
+        srow.addStretch()
+        rv.addLayout(srow)
+        rv.addSpacing(2)
+
+        self.cur_name = QLabel(tr("no_server"))
         self.cur_name.setObjectName("name")
         self.cur_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.cur_name.setFixedHeight(26)
@@ -774,7 +1220,7 @@ class ScorpionVPN(QMainWindow):
         prow = QHBoxLayout()
         prow.setSpacing(10)
         prow.addStretch()
-        self.ping_btn = QPushButton("تست پینگ")
+        self.ping_btn = QPushButton(tr("ping"))
         self.ping_btn.setObjectName("flat")
         self.ping_btn.clicked.connect(self.do_ping)
         self.ping_lbl = QLabel("")
@@ -788,7 +1234,7 @@ class ScorpionVPN(QMainWindow):
 
         xrow = QHBoxLayout()
         xrow.setSpacing(10)
-        self.cb_live = QCheckBox("پروکسی سیستم")
+        self.cb_live = QCheckBox(tr("sys_proxy"))
         self.cb_live.setObjectName("livecb")
         self.cb_live.setChecked(bool(self.settings.get("sys_proxy", True)))
         self.cb_live.stateChanged.connect(self._proxy_toggle)
@@ -800,10 +1246,15 @@ class ScorpionVPN(QMainWindow):
         rv.addLayout(xrow)
         rv.addStretch(1)
 
+        self.cd_lbl = QLabel("")
+        self.cd_lbl.setObjectName("cd")
+        self.cd_lbl.hide()
+        rv.addWidget(self.cd_lbl)
+
         self.log = QTextEdit()
         self.log.setObjectName("log")
         self.log.setReadOnly(True)
-        self.log.setFixedHeight(92)
+        self.log.setFixedHeight(80)
         rv.addWidget(self.log)
         h.addWidget(right, 10)
         return w
@@ -822,8 +1273,21 @@ class ScorpionVPN(QMainWindow):
         cv.setContentsMargins(2, 2, 2, 2)
         cv.setSpacing(14)
 
+        # ── Language ──
+        cv.addWidget(self._sec(tr("sec_language")))
+        langw = QWidget()
+        langw.setObjectName("panel")
+        lv = QVBoxLayout(langw)
+        lv.setContentsMargins(0, 6, 0, 6)
+        self.cb_lang = QComboBox()
+        self.cb_lang.addItems([tr("lang_en"), tr("lang_fa")])
+        self.cb_lang.setCurrentIndex(1 if LANG == "fa" else 0)
+        self.cb_lang.currentIndexChanged.connect(self._on_language)
+        lv.addWidget(Row(tr("lang_label"), tr("lang_sub"), ctrl=self.cb_lang))
+        cv.addWidget(langw)
+
         # ── تونل ──
-        cv.addWidget(self._sec("تونل"))
+        cv.addWidget(self._sec(tr("sec_tunnel")))
         tun = QWidget()
         tun.setObjectName("panel")
         tv = QVBoxLayout(tun)
@@ -831,58 +1295,104 @@ class ScorpionVPN(QMainWindow):
         tv.setSpacing(0)
 
         self.sw_frag = Switch(bool(self.settings.get("frag", False)))
-        tv.addWidget(Row("Fragmentation", "می‌تواند به دور زدن فیلترینگ کمک کند", ctrl=self.sw_frag))
+        tv.addWidget(Row(tr("frag"), tr("frag_sub"), ctrl=self.sw_frag))
 
         self.sw_mux = Switch(bool(self.settings.get("mux", False)))
-        tv.addWidget(Row("Mux", "چند کانفیگ روی یک اتصال", ctrl=self.sw_mux))
+        tv.addWidget(Row(tr("mux"), tr("mux_sub"), ctrl=self.sw_mux))
 
         self.cb_ip = QComboBox()
         self.cb_ip.addItems(["IPv4", "IPv6"])
         self.cb_ip.setCurrentIndex(0 if str(self.settings.get("ip_type", "4")) == "4" else 1)
-        tv.addWidget(Row("نوع IP ترجیحی", None, ctrl=self.cb_ip))
+        tv.addWidget(Row(tr("ip_type"), None, ctrl=self.cb_ip))
 
         self.sw_lan = Switch(bool(self.settings.get("lan", False)))
-        tv.addWidget(Row("اجازه اتصال از LAN", "شنود پروکسی روی 0.0.0.0", ctrl=self.sw_lan))
+        tv.addWidget(Row(tr("lan"), tr("lan_sub"), ctrl=self.sw_lan))
 
         self.ports_lbl = QLabel("SOCKS %d  /  HTTP %d" % (self.socks_port, self.http_port))
         self.ports_lbl.setObjectName("pinfo")
-        ports_btn = QPushButton("تغییر")
+        ports_btn = QPushButton(tr("change"))
         ports_btn.setObjectName("flat")
         ports_btn.clicked.connect(self.open_ports)
-        r = Row("پورت‌های پروکسی محلی", None)
+        r = Row(tr("local_ports"), None)
         r.add(self.ports_lbl)
         r.add(ports_btn)
         tv.addWidget(r)
         cv.addWidget(tun)
 
         # ── سایر ──
-        cv.addWidget(self._sec("سایر"))
+        cv.addWidget(self._sec(tr("sec_other")))
         oth = QWidget()
         oth.setObjectName("panel")
         ov = QVBoxLayout(oth)
         ov.setContentsMargins(0, 6, 0, 6)
         ov.setSpacing(0)
-        clear_btn = QPushButton("پاک‌کردن")
+        clear_btn = QPushButton(tr("clear"))
         clear_btn.setObjectName("flat")
         clear_btn.clicked.connect(self.log.clear)
-        ov.addWidget(Row("لاگ‌ها", "رویدادهای اتصال در صفحه اصلی", ctrl=clear_btn))
-        reset_btn = QPushButton("بازنشانی")
+        ov.addWidget(Row(tr("logs"), tr("logs_sub"), ctrl=clear_btn))
+        reset_btn = QPushButton(tr("reset"))
         reset_btn.setObjectName("danger")
         reset_btn.clicked.connect(self.reset_all)
-        ov.addWidget(Row("بازنشانی", "حذف همه کانفیگ‌ها و تنظیمات", danger=True, ctrl=reset_btn))
+        ov.addWidget(Row(tr("reset"), tr("reset_sub"), danger=True, ctrl=reset_btn))
         cv.addWidget(oth)
 
+        # ── بروزرسانی ──
+        cv.addWidget(self._sec(tr("sec_update")))
+        upd = QWidget()
+        upd.setObjectName("panel")
+        uv2 = QVBoxLayout(upd)
+        uv2.setContentsMargins(0, 6, 0, 6)
+        uv2.setSpacing(0)
+
+        self.upd_lbl = QLabel(tr("ver_line", (supd.APP_VERSION if supd else "?")))
+        self.upd_lbl.setObjectName("pinfo")
+        check_app_btn = QPushButton(tr("check"))
+        check_app_btn.setObjectName("flat")
+        check_app_btn.clicked.connect(lambda: self.check_app_update(manual=True))
+        r_app = Row(tr("upd_app"), tr("upd_app_sub"))
+        r_app.add(self.upd_lbl)
+        r_app.add(check_app_btn)
+        uv2.addWidget(r_app)
+
+        # نوتیفیکیشن آپدیت موجود (وقتی آپدیت خودکار خاموش باشد)
+        self.upd_notify = QWidget()
+        self.upd_notify.setObjectName("notify")
+        nv = QHBoxLayout(self.upd_notify)
+        nv.setContentsMargins(14, 10, 14, 10)
+        self.upd_notify_lbl = QLabel("")
+        self.upd_notify_lbl.setObjectName("notify")
+        self.upd_go = QPushButton(tr("update"))
+        self.upd_go.setObjectName("flat")
+        self.upd_go.clicked.connect(lambda: self.start_app_update())
+        nv.addWidget(self.upd_notify_lbl, 1)
+        nv.addWidget(self.upd_go)
+        self.upd_notify.hide()
+        uv2.addWidget(self.upd_notify)
+
+        self.sw_autoupd = Switch(bool(self.settings.get("auto_update", False)))
+        uv2.addWidget(Row(tr("auto_upd"), tr("auto_upd_sub"), ctrl=self.sw_autoupd))
+
+        self.core_lbl = QLabel("—")
+        self.core_lbl.setObjectName("pinfo")
+        check_core_btn = QPushButton(tr("check"))
+        check_core_btn.setObjectName("flat")
+        check_core_btn.clicked.connect(self.check_core_update)
+        r_core = Row(tr("upd_core"), None, ctrl=check_core_btn)
+        r_core.add(self.core_lbl)
+        uv2.addWidget(r_core)
+        cv.addWidget(upd)
+
         # ── درباره ──
-        cv.addWidget(self._sec("درباره"))
+        cv.addWidget(self._sec(tr("sec_about")))
         ab = QWidget()
         ab.setObjectName("panel")
         av = QVBoxLayout(ab)
         av.setContentsMargins(0, 6, 0, 6)
         av.setSpacing(0)
-        about_btn = QPushButton("مشاهده")
+        about_btn = QPushButton(tr("view"))
         about_btn.setObjectName("flat")
         about_btn.clicked.connect(self._about)
-        av.addWidget(Row("Scorpion VPN — نسخه 1.0", "Hami Smart Systems", ctrl=about_btn))
+        av.addWidget(Row("Scorpion VPN — v%s" % (supd.APP_VERSION if supd else "1.4.0"), "HAMI SMART SYSTEMS", ctrl=about_btn))
         cv.addWidget(ab)
 
         cv.addStretch(1)
@@ -893,7 +1403,9 @@ class ScorpionVPN(QMainWindow):
         self.sw_frag.toggled.connect(self._save_opts)
         self.sw_mux.toggled.connect(self._save_opts)
         self.sw_lan.toggled.connect(self._save_opts)
+        self.sw_autoupd.toggled.connect(self._save_opts)
         self.cb_ip.currentIndexChanged.connect(self._save_opts)
+        self._core_version_async()
         return w
 
     def _sec(self, t):
@@ -907,12 +1419,22 @@ class ScorpionVPN(QMainWindow):
                               "ip_type": "4" if self.cb_ip.currentIndex() == 0 else "6",
                               "lan": self.sw_lan.isChecked(),
                               "sys_proxy": self.cb_live.isChecked(),
+                              "auto_update": self.sw_autoupd.isChecked(),
                               "socks_port": self.socks_port,
-                              "http_port": self.http_port})
+                              "http_port": self.http_port,
+                              "language": "fa" if getattr(self, "cb_lang", None) and self.cb_lang.currentIndex() == 1 else self.settings.get("language", "en")})
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.settings, f)
         except OSError:
+            pass
+        try:
+            if self.about_dlg is not None:
+                self.about_dlg.cb_auto.blockSignals(True)
+                self.about_dlg.cb_auto.setChecked(bool(self.settings.get("auto_update")))
+                self.about_dlg.cb_auto.blockSignals(False)
+                self.about_dlg.refresh_notify()
+        except Exception:
             pass
 
     def open_ports(self):
@@ -922,10 +1444,10 @@ class ScorpionVPN(QMainWindow):
             self.http_port = d.sp_http.value()
             self.ports_lbl.setText("SOCKS %d  /  HTTP %d" % (self.socks_port, self.http_port))
             self._save_opts()
-            self._log("پورت‌های پروکسی تغییر کرد؛ از اتصال بعدی اعمال می‌شود.")
+            self._log(tr("ports_changed"))
 
     def reset_all(self):
-        if QMessageBox.question(self, "بازنشانی", "همه‌ی کانفیگ‌ها و تنظیمات حذف می‌شوند. ادامه می‌دهید؟",
+        if QMessageBox.question(self, tr("reset_title"), tr("reset_q"),
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
             return
         self.configs = []
@@ -936,7 +1458,7 @@ class ScorpionVPN(QMainWindow):
         except OSError:
             pass
         self.refresh_list()
-        self._log("بازنشانی کامل شد.")
+        self._log(tr("reset_done"))
 
     def _proxy_toggle(self, state):
         self.settings["sys_proxy"] = bool(state)
@@ -1013,12 +1535,153 @@ class ScorpionVPN(QMainWindow):
         self.save_configs()
         self.refresh_list()
         if added or errs:
-            self._log(f"{added} کانفیگ اضافه شد" + (f" / {errs} نامعتبر" if errs else ""))
+            self._log(tr("cfg_added", added) + (tr("cfg_bad", errs) if errs else ""))
         if urls:
-            self._log("دریافت ساب‌کریپشن...")
+            subs = self.load_subs()
+            known = {s.get("url") for s in subs}
+            for u in urls:
+                if u not in known:
+                    subs.append({"url": u, "keys": []})
+                    known.add(u)
+            self.save_subs(subs)
+            self._log(tr("sub_saved"))
+            self._log(tr("sub_fetch"))
+            self._refreshing = False
             self._subw = SubWorker(urls)
             self._subw.done.connect(self._sub_done)
             self._subw.start()
+
+    def load_subs(self):
+        try:
+            with open(SUBS_FILE, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return [s for s in data if isinstance(s, dict) and s.get("url")]
+        except (OSError, ValueError):
+            pass
+        return []
+
+    def save_subs(self, subs):
+        try:
+            with open(SUBS_FILE, "w", encoding="utf-8") as f:
+                json.dump(subs, f, ensure_ascii=False)
+        except OSError:
+            pass
+
+    def _key_of(self, uri):
+        plain = decode_scorpion(uri) if is_scorpion(uri) else uri
+        return config_key(plain, parse_uri)
+
+    def _remember_sub_keys(self):
+        per = getattr(getattr(self, "_subw", None), "per_url", None) or {}
+        if not per:
+            return
+        subs = self.load_subs()
+        changed = False
+        for s in subs:
+            lines = per.get(s.get("url"))
+            if not lines:
+                continue
+            keys = []
+            for u in lines:
+                try:
+                    keys.append(self._key_of(u))
+                except Exception:
+                    pass
+            if keys and s.get("keys") != keys:
+                s["keys"] = keys
+                changed = True
+        if changed:
+            self.save_subs(subs)
+
+    def _select_uri(self, uri):
+        for i in range(self.lst.count()):
+            it = self.lst.item(i)
+            if it and it.data(Qt.ItemDataRole.UserRole) == uri:
+                self.lst.setCurrentItem(it)
+                return
+
+    def refresh_subs(self):
+        if getattr(self, "_subw", None) is not None and self._subw.isRunning():
+            return
+        subs = self.load_subs()
+        if not subs:
+            url, ok = QInputDialog.getText(self, tr("refresh_title"), tr("refresh_need"))
+            url = (url or "").strip()
+            if not ok or not url.startswith(("http://", "https://")):
+                if ok:
+                    self._log(tr("refresh_fail"))
+                return
+            subs = [{"url": url, "keys": []}]
+            self.save_subs(subs)
+            self._log(tr("sub_saved"))
+        self._log(tr("sub_fetch"))
+        self._refreshing = True
+        self._subw = SubWorker([s["url"] for s in subs])
+        self._subw.done.connect(self._refresh_done)
+        self._subw.start()
+
+    def _refresh_done(self, _uris, errs):
+        self._refreshing = False
+        per = getattr(self._subw, "per_url", {}) or {}
+        was = self.connected_uri
+        was_key = None
+        if was:
+            try:
+                was_key = self._key_of(was)
+            except Exception:
+                was_key = None
+        configs = list(self.configs)
+        new_subs = []
+        total = {"replaced": 0, "added": 0, "removed": 0}
+        any_fetched = False
+        for s in self.load_subs():
+            url = s.get("url")
+            lines = per.get(url)
+            if not lines:
+                new_subs.append(s)
+                continue
+            any_fetched = True
+            valid = []
+            for u in lines:
+                try:
+                    resolve_config(u, self.socks_port, self.http_port)
+                    valid.append(u)
+                except Exception:
+                    errs += 1
+            configs, keys, stats = merge_subscription(
+                configs, valid, s.get("keys") or [], self._key_of)
+            for k in total:
+                total[k] += stats[k]
+            new_subs.append({"url": url, "keys": keys})
+        if not any_fetched:
+            self._log(tr("refresh_fail"))
+            return
+        self.configs = configs
+        self.save_configs()
+        self.save_subs(new_subs)
+        self.refresh_list()
+        new_uri = None
+        if was_key:
+            for u in self.configs:
+                try:
+                    if self._key_of(u) == was_key:
+                        new_uri = u
+                        break
+                except Exception:
+                    pass
+        if new_uri:
+            self._select_uri(new_uri)
+        if was and new_uri and new_uri != was and self.proc:
+            self.disconnect_xray()
+            self._select_uri(new_uri)
+            self.toggle()
+        if total["replaced"] or total["added"] or total["removed"]:
+            self._log(tr("refresh_done", total["replaced"], total["added"], total["removed"]))
+        elif errs:
+            self._log(tr("refresh_fail"))
+        else:
+            self._log(tr("refresh_same"))
 
     def _sub_done(self, uris, errs):
         added = 0
@@ -1031,8 +1694,9 @@ class ScorpionVPN(QMainWindow):
             except Exception:
                 errs += 1
         self.save_configs()
+        self._remember_sub_keys()
         self.refresh_list()
-        self._log(f"ساب: {added} کانفیگ دریافت شد" + (f" / {errs} خطا" if errs else ""))
+        self._log(tr("sub_ok", added) + (tr("sub_err", errs) if errs else ""))
 
     def _ctx_menu(self, pos):
         it = self.lst.itemAt(pos)
@@ -1040,17 +1704,69 @@ class ScorpionVPN(QMainWindow):
             return
         uri = it.data(Qt.ItemDataRole.UserRole)
         m = QMenu(self)
-        act_copy = m.addAction("کپی لینک")
-        act_del = m.addAction("حذف")
+        act_copy = m.addAction(tr("copy_link"))
+        act_del = m.addAction(tr("delete"))
         ch = m.exec(self.lst.mapToGlobal(pos))
         if ch == act_copy:
             QApplication.clipboard().setText(uri)
-            self._log("لینک کپی شد.")
+            self._log(tr("link_copied"))
         elif ch == act_del:
             if uri in self.configs:
                 self.configs.remove(uri)
             self.save_configs()
             self.refresh_list()
+
+    # ── تایمر اتصال ──
+    def open_timer_set(self):
+        d = QTimerSetDialog(self, self.auto_off_secs)
+        if d.exec() != QDialog.DialogCode.Accepted:
+            return
+        secs = d.seconds()
+        self.auto_off_secs = secs
+        self.settings["auto_off"] = secs
+        self._save_opts()
+        if secs <= 0:
+            self.countdown_end = 0.0
+            self.cd_lbl.hide()
+            self._log(tr("timer_cleared"))
+        elif self.proc:
+            # الان متصلیم — شمارش از همین لحظه
+            self.countdown_end = time.time() + secs
+            self.cd_lbl.setText(tr("auto_off", fmt_time(secs)))
+            self.cd_lbl.show()
+            self._log(tr("timer_set_now", fmt_time(secs)))
+        else:
+            # هنوز وصل نیستیم — برای شروع اتصال بعدی ذخیره می‌شود
+            self.countdown_end = 0.0
+            self.cd_lbl.hide()
+            self._log(tr("timer_saved", fmt_time(secs)))
+
+    def _clear_auto_off(self):
+        """بعد از پایان شمارنده، تایمر ریست می‌شود تا اتصال بعدی بدون محدودیت زمان باشد."""
+        self.countdown_end = 0.0
+        if not self.auto_off_secs:
+            return
+        self.auto_off_secs = 0
+        self.settings["auto_off"] = 0
+        self._save_opts()
+        self._log(tr("timer_reset"))
+
+    def _tick_conn(self):
+        if not self.proc:
+            return
+        now = time.time()
+        self.power.timer_text = fmt_time(now - self.conn_start)
+        self.power.update()
+        if self.countdown_end:
+            left = self.countdown_end - now
+            if left <= 0:
+                self.cd_lbl.hide()
+                self._log(tr("timer_fired"))
+                self._clear_auto_off()
+                self.disconnect_xray()
+            else:
+                self.cd_lbl.setText(tr("auto_off", fmt_time(left)))
+                self.cd_lbl.show()
 
     # ── اتصال ──
     def toggle(self):
@@ -1059,7 +1775,7 @@ class ScorpionVPN(QMainWindow):
             return
         uri = self._selected_uri()
         if not uri:
-            QMessageBox.information(self, "Scorpion VPN", "ابتدا یک سرور انتخاب کنید.")
+            QMessageBox.information(self, "Scorpion VPN", tr("pick_server"))
             return
         opts = {"mux": bool(self.settings.get("mux")),
                 "frag": bool(self.settings.get("frag")),
@@ -1068,13 +1784,13 @@ class ScorpionVPN(QMainWindow):
         try:
             cfg = resolve_config(uri, self.socks_port, self.http_port, opts)
         except Exception as e:
-            QMessageBox.critical(self, "خطا", str(e))
+            QMessageBox.critical(self, tr("error"), str(e))
             return
         self.connect_xray(cfg)
 
     def connect_xray(self, cfg):
         if os.name == "nt" and not os.path.exists(XRAY_PATH):
-            QMessageBox.critical(self, "هسته", "فایل xray.exe کنار برنامه قرار ندارد.")
+            QMessageBox.critical(self, tr("core"), tr("no_xray"))
             return
         fd, path = tempfile.mkstemp(suffix=".json", prefix="scorpion_")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -1085,18 +1801,24 @@ class ScorpionVPN(QMainWindow):
                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                          creationflags=flags)
         except OSError as e:
-            QMessageBox.critical(self, "خطا", f"اجرای xray: {e}")
+            QMessageBox.critical(self, tr("error"), tr("xray_run", e))
             return
+        self.connected_uri = self._selected_uri()
         if self.cb_live.isChecked():
             set_system_proxy(True, "127.0.0.1:%d" % self.http_port)
             self.proxy_info.setText("HTTP 127.0.0.1:%d  •  SOCKS5 127.0.0.1:%d" % (self.http_port, self.socks_port))
         self.power.connected = True
+        self.conn_start = time.time()
+        self.countdown_end = (self.conn_start + self.auto_off_secs) if self.auto_off_secs > 0 else 0.0
+        self.power.timer_text = "00:00:00"
+        self.conn_timer.start()
         self.power.update()
-        self.chip.setText("متصل")
-        self.chip.setObjectName("chipOn")
-        self.chip.style().unpolish(self.chip)
-        self.chip.style().polish(self.chip)
-        self._log("متصل شد.")
+        if self.countdown_end:
+            self.cd_lbl.setText(tr("auto_off", fmt_time(self.auto_off_secs)))
+            self.cd_lbl.show()
+            self._log(tr("connected_off", fmt_time(self.auto_off_secs)))
+        else:
+            self._log(tr("connected_log"))
 
     def disconnect_xray(self):
         if self.proc:
@@ -1106,15 +1828,17 @@ class ScorpionVPN(QMainWindow):
             except subprocess.TimeoutExpired:
                 self.proc.kill()
             self.proc = None
+        self.connected_uri = None
         set_system_proxy(False)
         self.proxy_info.setText("")
+        self.conn_timer.stop()
+        self.conn_start = 0.0
+        self.countdown_end = 0.0
+        self.cd_lbl.hide()
         self.power.connected = False
+        self.power.timer_text = ""
         self.power.update()
-        self.chip.setText("قطع")
-        self.chip.setObjectName("chipOff")
-        self.chip.style().unpolish(self.chip)
-        self.chip.style().polish(self.chip)
-        self._log("قطع شد.")
+        self._log(tr("disconnected"))
 
     def do_ping(self):
         uri = self._selected_uri()
@@ -1139,11 +1863,164 @@ class ScorpionVPN(QMainWindow):
         self.ping_lbl.setPalette(pal)
 
     def _ping_done(self, ms):
-        self._set_ping(f"{ms} ms" if ms >= 0 else "ناموفق", ACCENT if ms >= 0 else "#ff6b6b")
+        self._set_ping(f"{ms} ms" if ms >= 0 else tr("ping_fail"), ACCENT if ms >= 0 else "#ff6b6b")
+
+    # ─────────────── بروزرسانی ───────────────
+    def _core_version_async(self):
+        """نمایش نسخهٔ هستهٔ فعلی در برچسب"""
+        try:
+            v = supd.xray_version(XRAY_PATH) if supd else ""
+            self.core_lbl.setText(v if v else tr("unknown"))
+        except Exception:
+            self.core_lbl.setText(tr("unknown"))
+
+    def _upd_progress(self, pct, text):
+        try:
+            self._log(text)
+        except Exception:
+            pass
+
+    def _mark_checked(self):
+        try:
+            self.settings["last_update_check"] = time.time()
+            with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.settings, f)
+        except OSError:
+            pass
+
+    def check_app_update(self, manual=True):
+        if supd is None:
+            if manual:
+                QMessageBox.warning(self, tr("upd"), tr("upd_missing"))
+            return
+        self._upd_manual = manual
+        if manual:
+            self._log(tr("checking_app"))
+        self.w_upd = UpdateWorker("check_app")
+        self.w_upd.done.connect(self._on_check_app)
+        self.w_upd.start()
+
+    def start_app_update(self, info=None):
+        if supd is None:
+            QMessageBox.warning(self, tr("upd"), tr("upd_missing"))
+            return
+        info = info or self.pending_app_update
+        if not info:
+            self.check_app_update(manual=True)
+            return
+        self.upd_notify.hide()
+        self._log(tr("dl_app", info.get("latest")))
+        self.w_dl = UpdateWorker("dl_app", {"info": info})
+        self.w_dl.prog.connect(self._upd_progress)
+        self.w_dl.done.connect(self._on_dl_app)
+        self.w_dl.start()
+
+    def _on_check_app(self, kind, payload):
+        self._mark_checked()
+        if payload == "NO_MODULE":
+            if self._upd_manual:
+                QMessageBox.warning(self, tr("upd"), tr("upd_missing"))
+            return
+        if payload.startswith("ERR:"):
+            if self._upd_manual:
+                QMessageBox.warning(self, tr("upd"), tr("upd_fail", payload[4:]))
+            return
+        if not payload:
+            self.pending_app_update = None
+            self.upd_notify.hide()
+            if self._upd_manual:
+                QMessageBox.information(self, tr("upd"), tr("latest", supd.APP_VERSION))
+            self._log(tr("app_current"))
+            try:
+                if self.about_dlg is not None:
+                    self.about_dlg.refresh_notify()
+            except Exception:
+                pass
+            return
+        info = json.loads(payload)
+        self.pending_app_update = info
+        self.upd_notify_lbl.setText(tr("new_ready", info.get("latest")))
+        self.upd_notify.show()
+        self._log(tr("new_avail", info.get("latest")))
+        try:
+            if self.about_dlg is not None:
+                self.about_dlg.refresh_notify()
+        except Exception:
+            pass
+        if not self._upd_manual and self.settings.get("auto_update"):
+            self._log(tr("auto_dl"))
+            self.start_app_update(info)
+        elif self._upd_manual:
+            notes = (info.get("notes") or "").strip()
+            msg = tr("new_q", info.get("latest"), notes)
+            if QMessageBox.question(self, tr("upd_app"), msg,
+                                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+                return
+            self.start_app_update(info)
+
+    def _on_dl_app(self, kind, path):
+        if path.startswith("ERR:"):
+            QMessageBox.warning(self, tr("upd"), tr("dl_fail", path[4:]))
+            return
+        try:
+            supd.run_installer(path)
+            QMessageBox.information(self, tr("upd"), tr("installer_opened"))
+            self._log(tr("installer_ran", path))
+        except Exception as e:
+            QMessageBox.information(self, tr("upd"), tr("installer_err", path, e))
+
+    def check_core_update(self):
+        if supd is None:
+            QMessageBox.warning(self, tr("upd"), tr("upd_missing"))
+            return
+        self._log(tr("checking_core"))
+        self.w_core = UpdateWorker("check_core")
+        self.w_core.done.connect(self._on_check_core)
+        self.w_core.start()
+
+    def _on_check_core(self, kind, payload):
+        if payload.startswith("ERR:"):
+            QMessageBox.warning(self, tr("upd"), tr("upd_fail", payload[4:]))
+            return
+        try:
+            d = json.loads(payload)
+        except Exception:
+            QMessageBox.warning(self, tr("upd"), tr("upd_fail", "Invalid response"))
+            return
+        cur = d.get("current") or ""
+        self.core_lbl.setText(cur if cur else tr("unknown"))
+        info = d.get("info")
+        if not info:
+            QMessageBox.information(self, tr("core"), tr("core_current", (tr("core_ver", cur) if cur else "")))
+            self._log(tr("app_current"))
+            return
+        msg = tr("core_q", info.get("version"), cur or tr("unknown"))
+        if QMessageBox.question(self, tr("upd_core"), msg,
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        self.w_core2 = UpdateWorker("dl_core", {"info": info})
+        self.w_core2.prog.connect(self._upd_progress)
+        self.w_core2.done.connect(self._on_dl_core)
+        self.w_core2.start()
+
+    def _on_dl_core(self, kind, backup):
+        if backup.startswith("ERR:"):
+            QMessageBox.warning(self, tr("upd_core"), tr("core_fail", backup[4:]))
+            return
+        self._core_version_async()
+        QMessageBox.information(self, tr("upd_core"), tr("core_ok", backup))
+        self._log(tr("core_ok_log", backup))
 
     def _about(self):
-        QMessageBox.about(self, "Scorpion VPN",
-                          "Scorpion VPN 1.0\nHami Smart Systems\n\nپشتیبانی از VLESS / VMESS / Shadowsocks / Trojan\nساب‌کریپشن و کانفیگ‌های اختصاصی scorpion://")
+        if self.about_dlg is None:
+            self.about_dlg = AboutDialog(self)
+            def _closed(_=None):
+                self.about_dlg = None
+            self.about_dlg.finished.connect(_closed)
+        self.about_dlg.refresh_notify()
+        self.about_dlg.show()
+        self.about_dlg.raise_()
+        self.about_dlg.activateWindow()
 
     def _log(self, s):
         self.log.append(s)
@@ -1165,19 +2042,36 @@ if __name__ == "__main__":
             pass
 
     sys.excepthook = _hook
+    # ریشه‌ای: AppUserModelID باید قبل از QApplication ست شود و ثابت بماند
     if os.name == "nt":
         try:
             import ctypes
-            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("hami.scorpionvpn.1.0")
+            # شناسه یکتا و ثابت برای تسک‌بار — تغییر نده تا ویندوز کش را گم نکند
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("HamiSmartSystems.ScorpionVPN")
         except Exception:
             pass
     app = QApplication(sys.argv)
     app.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
     app.setFont(QFont("Segoe UI", 10))
     app.setStyleSheet(STYLE)
-    icon_file = ICON_PATH if os.path.exists(ICON_PATH) else ICO_PATH
-    if os.path.exists(icon_file):
-        app.setWindowIcon(QIcon(icon_file))
+    icon = app_icon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
+    # اگر آیکون null بود، از PNG بساز تا تسک‌بار خالی نماند
+    else:
+        try:
+            from PyQt6.QtGui import QPixmap
+            if os.path.exists(ICON_PATH):
+                app.setWindowIcon(QIcon(ICON_PATH))
+        except Exception:
+            pass
     win = ScorpionVPN()
     win.show()
+    # بعد از show، حتماً WM_SETICON بفرست
+    if os.name == "nt":
+        try:
+            QTimer.singleShot(150, win._apply_taskbar_icon)
+            QTimer.singleShot(600, win._apply_taskbar_icon)
+        except Exception:
+            pass
     sys.exit(app.exec())
