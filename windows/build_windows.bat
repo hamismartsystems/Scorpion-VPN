@@ -1,27 +1,37 @@
 @echo on
 cd /d "%~dp0"
 set "LOG=%~dp0build_log.txt"
-echo === Scorpion VPN Build Log === > "%LOG%"
-echo ============================================
-echo   Scorpion VPN 1.4.1 - Windows Build - Icon Fix
-echo ============================================
+echo === Scorpion VPN Build Log 1.4.1 Icon Fix === > "%LOG%"
 
-echo Checking required files...
+echo Checking essential files...
 set MISSING=0
-for %%F in (scorpion_vpn.py scorpion_update.py scorpion_i18n.py xray.exe geoip.dat geosite.dat scorpion.ico scorpion_icon.png) do (
+for %%F in (scorpion_vpn.py scorpion.ico scorpion_icon.png) do (
   if not exist "%%F" (
-    echo   MISSING: %%F
-    echo MISSING FILE: %%F >> "%LOG%"
+    echo   MISSING ESSENTIAL: %%F
+    echo MISSING ESSENTIAL: %%F >> "%LOG%"
     set MISSING=1
   )
 )
 if %MISSING%==1 (
   echo.
-  echo ERROR: some files are missing in this folder!
-  echo All these files must be beside the bat:
-  echo   scorpion_vpn.py, scorpion_update.py, xray.exe, geoip.dat, geosite.dat, scorpion.ico, scorpion_icon.png
+  echo ERROR: essential files missing! Must have scorpion_vpn.py, scorpion.ico, scorpion_icon.png beside bat
   pause
   exit /b 1
+)
+
+REM Check xray and geo — try to auto-download if missing
+if not exist "xray.exe" (
+  echo   WARNING: xray.exe not found, trying to download...
+  echo WARNING xray.exe missing >> "%LOG%"
+  powershell -Command "try { Invoke-WebRequest -Uri 'https://github.com/XTLS/Xray-core/releases/latest/download/Xray-windows-64.zip' -OutFile 'xray.zip' -UseBasicParsing; Expand-Archive -Path 'xray.zip' -DestinationPath '.' -Force; Remove-Item 'xray.zip' -Force; } catch { Write-Host 'Download failed, please put xray.exe manually' }" >> "%LOG%" 2>&1
+)
+if not exist "geoip.dat" (
+  echo   WARNING: geoip.dat missing, creating empty or downloading...
+  powershell -Command "try { Invoke-WebRequest -Uri 'https://github.com/v2fly/geoip/releases/latest/download/geoip.dat' -OutFile 'geoip.dat' -UseBasicParsing; } catch { }" >> "%LOG%" 2>&1
+)
+if not exist "geosite.dat" (
+  echo   WARNING: geosite.dat missing, downloading...
+  powershell -Command "try { Invoke-WebRequest -Uri 'https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat' -OutFile 'geosite.dat' -UseBasicParsing; } catch { }" >> "%LOG%" 2>&1
 )
 
 set PY=
@@ -39,34 +49,33 @@ if not defined PY (
   exit /b 1
 )
 echo Python: %PY%
-echo Python: %PY% >> "%LOG%"
 "%PY%" --version >> "%LOG%" 2>&1
 
 echo.
 echo [1/2] Installing PyInstaller...
-"%PY%" -m pip install pyinstaller >> "%LOG%" 2>&1
-if errorlevel 1 (
-  echo ERROR: pip install failed - send build_log.txt
-  pause
-  exit /b 1
-)
+"%PY%" -m pip install pyinstaller pillow PyQt6 cryptography >> "%LOG%" 2>&1
 
-echo [2/2] Building Scorpion VPN 1.4.1 (1-2 minutes) - Icon Fix...
-"%PY%" -m PyInstaller --noconfirm --onedir --windowed --name "Scorpion VPN" --icon=scorpion.ico --hidden-import scorpion_i18n --hidden-import scorpion_update --add-data "xray.exe;." --add-data "geoip.dat;." --add-data "geosite.dat;." --add-data "scorpion_icon.png;." --add-data "scorpion.ico;." scorpion_vpn.py >> "%LOG%" 2>&1
+echo [2/2] Building Scorpion VPN 1.4.1 Icon Fix...
+set ADD=
+if exist "xray.exe" set ADD=%ADD% --add-data "xray.exe;."
+if exist "geoip.dat" set ADD=%ADD% --add-data "geoip.dat;."
+if exist "geosite.dat" set ADD=%ADD% --add-data "geosite.dat;."
+if exist "scorpion_icon.png" set ADD=%ADD% --add-data "scorpion_icon.png;."
+if exist "scorpion.ico" set ADD=%ADD% --add-data "scorpion.ico;."
+
+"%PY%" -m PyInstaller --noconfirm --onedir --windowed --name "Scorpion VPN" --icon=scorpion.ico --hidden-import scorpion_i18n --hidden-import scorpion_update --hidden-import cryptography %ADD% scorpion_vpn.py >> "%LOG%" 2>&1
 if errorlevel 1 (
   echo.
-  echo BUILD FAILED. Last lines of log:
-  echo ----------------------------------------
-  powershell -command "Get-Content '%LOG%' | Select-Object -Last 25"
-  echo ----------------------------------------
-  echo Please send build_log.txt or a screenshot of this window
+  echo BUILD FAILED. Last lines:
+  powershell -Command "Get-Content '%LOG%' | Select-Object -Last 40"
   pause
   exit /b 1
 )
 
 echo.
 echo ============================================
-echo   OK! Output: dist\Scorpion VPN
-echo   Next: installer.iss in Inno Setup, press F9
+echo   OK! Output: dist\Scorpion VPN\Scorpion VPN.exe
+echo   Icon fix included: taskbar icon should now show
+echo   Next: installer.iss in Inno Setup F9 -> ScorpionVPN-Setup-1.4.1.exe
 echo ============================================
 pause
