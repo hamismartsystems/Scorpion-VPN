@@ -2,9 +2,9 @@
 
 # 🦂 Scorpion VPN
 
-کلاینت VPN اختصاصی **HAMI SMART SYSTEMS / حامی دیزاینز** — در کنار پشتیبانی از کانفیگ‌های استاندارد (VLESS، VMess، Trojan، Shadowsocks)، تنها برنامه‌ای است که **کانفیگ‌های اختصاصی `scorpion://`** را اجرا می‌کند.
+کلاینت VPN اختصاصی **HAMI SMART SYSTEMS / حامی دیزاینز** — برای ویندوز، اندروید، مک و لینوکس. بر پایه هسته‌های **Xray** و **sing-box**، با پشتیبانی کامل از پروتکل‌های روز:
 
-کانفیگ‌های اسکورپین خارج از این برنامه کار نمی‌کنند — اشتراک شما فقط با همین برنامه به دست مشتری می‌رسد.
+**VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / AnyTLS + Reality / XHTTP / gRPC / HTTPUpgrade**
 
 ## ⬇️ دانلود
 
@@ -23,25 +23,32 @@
 
 ## ✨ ویژگی‌ها
 
-- 🔒 **فرمت اختصاصی `scorpion://`** — رمزنگاری AES-256-GCM روی کانفیگ اشتراک؛ فقط در همین برنامه باز می‌شود
-- 🌐 پشتیبانی هم‌زمان از کانفیگ‌های استاندارد — بدون قطع سرویس برای کاربران فعلی
-- ⚡ هستهٔ **Xray** با پشتیبانی کامل **Reality**
-- 🎨 رابط حرفه‌ای با تم سبزآبی (Teal) اختصاصی برند
-- 🖥 نصب‌کنندهٔ ویندوز با آیکون در تسک‌بار، تایتل‌بار و شورتکات‌ها
-- 🤖 اندروید: فورک تخصصی v2rayNG (GPL-3.0) + لایهٔ اسکورپین
+- 🌐 **پشتیبانی کامل از پروتکل‌های استاندارد** — VLESS، VMess، Trojan، Shadowsocks، Hysteria2، TUIC، AnyTLS
+- ⚡ **دو هسته:** Xray (Reality، XHTTP، gRPC) + sing-box (QUIC، Hysteria2، TUIC)
+- 🔒 **اینباند خصوصی (ادمین-فقط) با Hami Panel** — به‌جای دستکاری لینک ساب، اینباند اختصاصی با `is_private` ساخته می‌شود؛ از توزیع خودکار حذف و فقط برای کلاینت‌های همان اینباند سرو می‌شود. امن، سمت سرور.
+- 🎨 رابط حرفه‌ای با تم اختصاصی و آیکون برند
+- 🖥 ویندوز: نصب‌کننده با آیکون تسک‌بار، تایتل‌بار و شورتکات‌ها
+- 🤖 اندروید: فورک تخصصی v2rayNG (GPL-3.0) + بهینه‌سازی‌های Scorpion
+- 🔄 ساب چندقالبه: v2ray base64، Clash/Mihomo YAML، sing-box JSON، Shadowrocket
 
-## 🛠 سورس
+### درباره فرمت قدیمی `scorpion://`
 
-- **اندروید:** همین ریپازیتوری — فورک v2rayNG + لایهٔ اسکورپین
-- **ویندوز:** پوشهٔ [`windows/`](windows) — پایتون + PyInstaller + Inno Setup
-- ساخت کانفیگ اسکورپین (فقط صاحب سرور): `python windows/scorpion_config.py "vless://..."`
+نسخه‌های قبلی یک لایه رمزنگاری کلاینت-ساید (`scorpion://v1.` + AES-GCM) داشتند. این فرمت هنوز برای سازگاری با نسخه‌های قدیمی باز می‌شود، اما **برای امنیت جدید توصیه نمی‌شود** — چون کلید داخل اپ است و قابل استخراج است. برای کانفیگ اختصاصی واقعی از قابلیت **Private Inbound** در **HP-UI / Hami Panel** استفاده کنید (`hami inbound add --private`).
+
+ساخت کانفیگ قدیمی (فقط برای سازگاری): `python windows/scorpion_config.py "vless://..."`
+
+## 🛠 سورس و پنل
+
+- **اندروید:** همین ریپازیتوری — فورک v2rayNG + لایه Scorpion
+- **ویندوز/مک/لینوکس:** پوشه [`windows/`](windows) — پایتون + PyInstaller + Inno Setup
+- **پنل مدیریت:** **[Hami Panel (HP-UI)](https://github.com/hamismartsystems/Hami_panel)** — پنل Go با GPL-3.0، مدیریت اینباند، کاربر، ساب، نود، sing-box، اینباند خصوصی، Reality check، قالب‌ها
 
 ## 📄 پروانه
 
-بخش‌های مبتنی بر v2rayNG تحت **GPL-3.0**. لایهٔ اسکورپین متعلق به HAMI SMART SYSTEMS است.
+بخش‌های مبتنی بر v2rayNG تحت **GPL-3.0**. لایه Scorpion متعلق به HAMI SMART SYSTEMS است.
 
 ---
 
-🏠 [hamidesigns.shop](https://hamidesigns.shop)
+🏠 [hamidesigns.shop](https://hamidesigns.shop) — HAMI SMART SYSTEMS
 
 </div>
