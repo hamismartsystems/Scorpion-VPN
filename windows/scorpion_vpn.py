@@ -13,6 +13,7 @@ try:
 except Exception:
     supd = None
 from scorpion_i18n import tr, set_lang, LANG
+import scorpion_i18n as _i18n
 from scorpion_sub import config_key, merge_subscription
 
 # ───────────────────────── ۱) قالب اختصاصی scorpion:// ─────────────────────────
@@ -251,7 +252,7 @@ def load_settings():
 
 def _n(en, fa):
     """رشته‌های جدیدی که هنوز در scorpion_i18n نیستند (دوزبانهٔ مستقیم)."""
-    return fa if LANG == "fa" else en
+    return fa if _i18n.LANG == "fa" else en
 
 
 def _sub_host(url):
@@ -1413,7 +1414,7 @@ class ScorpionVPN(QMainWindow):
         lv.setContentsMargins(0, 6, 0, 6)
         self.cb_lang = QComboBox()
         self.cb_lang.addItems([tr("lang_en"), tr("lang_fa")])
-        self.cb_lang.setCurrentIndex(1 if LANG == "fa" else 0)
+        self.cb_lang.setCurrentIndex(1 if _i18n.LANG == "fa" else 0)
         self.cb_lang.currentIndexChanged.connect(self._on_language)
         lv.addWidget(Row(tr("lang_label"), tr("lang_sub"), ctrl=self.cb_lang))
         cv.addWidget(langw)
