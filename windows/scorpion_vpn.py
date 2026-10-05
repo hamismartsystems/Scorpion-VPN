@@ -7,6 +7,7 @@ Scorpion VPN — کلاینت ویندوز (تک‌فایل)
 آیکون نوار وظیفه از scorpion.ico (BMP) و منبع داخل exe می‌آید، نه از کش ویندوز.
 """
 import os, sys, json, base64, hashlib, subprocess, tempfile, socket, time
+from concurrent.futures import ThreadPoolExecutor
 try:
     import scorpion_update as supd
 except Exception:
@@ -248,6 +249,90 @@ def load_settings():
         return {}
 
 
+def _n(en, fa):
+    """رشته‌های جدیدی که هنوز در scorpion_i18n نیستند (دوزبانهٔ مستقیم)."""
+    return fa if LANG == "fa" else en
+
+
+def _sub_host(url):
+    """نام میزبان سابسکریپشن برای وقتی که profile-title ندارد."""
+    try:
+        return up.urlsplit(url).netloc or url[:40]
+    except Exception:
+        return url[:40]
+
+
+def _drop_deleted(lines, deleted, key_of):
+    """خطوطی که کلیدشان در لیست «حذف‌شده‌های دستی» است را کنار می‌گذارد."""
+    if not deleted:
+        return list(lines)
+    dset = set(deleted)
+    out = []
+    for u in lines:
+        try:
+            if key_of(u) in dset:
+                continue
+        except Exception:
+            pass
+        out.append(u)
+    return out
+
+
+def _prune_deleted(deleted, lines, key_of):
+    """تامبستون‌های بی‌فایده را نگه نمی‌دارد: فقط کلیدهایی که ساب هنوز می‌فرستد."""
+    if not deleted:
+        return []
+    present = set()
+    for u in lines:
+        try:
+            present.add(key_of(u))
+        except Exception:
+            pass
+    return [k for k in deleted if k in present]
+
+
+def _count_alive(sub, configs, key_of):
+    """چند کانفیگِ فعلی به این سابسکریپشن تعلق دارد."""
+    ks = set(sub.get("keys") or [])
+    if not ks:
+        return 0
+    n = 0
+    for u in configs:
+        try:
+            if key_of(u) in ks:
+                n += 1
+        except Exception:
+            pass
+    return n
+
+
+def group_configs(configs, subs, key_of):
+    """[(نام گروه، [uri، …])] — به ترتیب سابسکریپشن‌ها؛ کانفیگ‌های دستی آخرِ لیست با نام None."""
+    order, gmap = [], {}
+    for s in subs:
+        nm = (s.get("name") or "").strip() or _sub_host(s.get("url", ""))
+        for k in (s.get("keys") or []):
+            gmap.setdefault(k, nm)
+        if nm and nm not in order:
+            order.append(nm)
+    per = {g: [] for g in order}
+    manual = []
+    for u in configs:
+        try:
+            k = key_of(u)
+        except Exception:
+            k = None
+        g = gmap.get(k)
+        if g:
+            per[g].append(u)
+        else:
+            manual.append(u)
+    out = [(g, lst) for g, lst in per.items() if lst]
+    if manual:
+        out.append((None, manual))
+    return out
+
+
 def set_system_proxy(on, server="127.0.0.1:10809"):
     host, port = "127.0.0.1", "10809"
     if ":" in str(server):
@@ -302,9 +387,10 @@ import urllib.request as ureq
 from PyQt6.QtGui import QFont, QIcon, QPainter, QColor, QPen, QPainterPath, QPalette
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, QSize, QRectF, QPointF
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QLabel, QLineEdit, QPushButton, QListWidget, QListWidgetItem,
+                             QLabel, QLineEdit, QPushButton,
                              QTextEdit, QMessageBox, QStackedWidget, QSpinBox, QCheckBox,
-                             QDialog, QMenu, QScrollArea, QComboBox, QInputDialog)
+                             QDialog, QMenu, QScrollArea, QComboBox, QInputDialog,
+                             QTreeWidget, QTreeWidgetItem)
 
 ACCENT = "#00e07a"
 BG = "#0f1115"
@@ -324,6 +410,13 @@ QLineEdit#search:focus{border:1px solid %(ac)s;}
 QListWidget{background:transparent;border:none;outline:none;}
 QListWidget::item{background:transparent;border:none;padding:0px;margin:0px;}
 QListWidget::item:selected{background:transparent;}
+QTreeWidget{background:transparent;border:none;outline:none;}
+QTreeWidget::item{background:transparent;border:none;padding:0px;margin:0px;}
+QTreeWidget::item:selected{background:transparent;}
+QTreeWidget::branch{background:transparent;}
+QLabel#gname{font-size:13px;font-weight:700;}
+QLabel#gcount{color:%(sb)s;font-size:11px;}
+QLabel#gtri{color:%(sb)s;font-size:12px;}
 QWidget#card{background:%(card)s;border:1px solid #232a36;border-radius:12px;}
 QWidget#card:hover{background:%(ch)s;}
 QWidget#card[sel="1"]{border:1px solid %(ac)s;background:#14231d;}
@@ -568,6 +661,26 @@ class ServerCard(QWidget):
             p.drawRoundedRect(QRectF(0.75, 0.75, self.width() - 1.5, self.height() - 1.5), 12, 12)
 
 
+class GroupRow(QWidget):
+    """سربرگ گروه سابسکریپشن (شبیه لیست Happ): مثلث + نام + تعداد."""
+    def __init__(self, name, count, expanded):
+        super().__init__()
+        self.setStyleSheet("background:transparent;")
+        h = QHBoxLayout(self)
+        h.setContentsMargins(6, 6, 10, 6)
+        h.setSpacing(8)
+        self.tri = QLabel("▾" if expanded else "▸")
+        self.tri.setObjectName("gtri")
+        self.tri.setFixedWidth(14)
+        nm = QLabel(name)
+        nm.setObjectName("gname")
+        cnt = QLabel(_n("%d configs" % count, "%d کانفیگ" % count))
+        cnt.setObjectName("gcount")
+        h.addWidget(self.tri)
+        h.addWidget(nm, 1)
+        h.addWidget(cnt)
+
+
 class AddDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -788,35 +901,51 @@ class SubWorker(QThread):
         super().__init__()
         self.urls = urls
 
+    @staticmethod
+    def _fetch(u):
+        """(خطوط کانفیگ، نام ساب از Profile-Title) برای یک آدرس — به‌موازات بقیه اجرا می‌شود."""
+        try:
+            req = ureq.Request(u, headers={"User-Agent": "ScorpionVPN/1.4.0"})
+            with ureq.urlopen(req, timeout=20) as r:
+                data = r.read()
+                name = (r.headers.get("Profile-Title") or "").strip()
+                if name.lower().startswith("base64:"):
+                    # بعضی پنل‌ها (از جمله پنل ما) عنوان را base64 می‌فرستند
+                    try:
+                        name = base64.b64decode(name[7:].strip()).decode("utf-8", "replace").strip()
+                    except Exception:
+                        name = name[7:].strip()
+            try:
+                cand = data.decode("utf-8")
+            except UnicodeDecodeError:
+                cand = ""
+            cand = cand.strip()
+            if "://" not in cand:
+                pad = cand + "=" * (-len(cand) % 4)
+                try:
+                    dec = base64.b64decode(pad).decode("utf-8", "ignore")
+                    if "://" in dec:
+                        cand = dec
+                except Exception:
+                    pass
+            return [l.strip() for l in cand.splitlines() if "://" in l.strip()], name
+        except OSError:
+            return [], ""
+
     def run(self):
         out, errs = [], 0
         self.per_url = {}
-        for u in self.urls:
-            try:
-                req = ureq.Request(u, headers={"User-Agent": "ScorpionVPN/1.4.0"})
-                with ureq.urlopen(req, timeout=20) as r:
-                    data = r.read()
-                try:
-                    cand = data.decode("utf-8")
-                except UnicodeDecodeError:
-                    cand = ""
-                cand = cand.strip()
-                if "://" not in cand:
-                    pad = cand + "=" * (-len(cand) % 4)
-                    try:
-                        dec = base64.b64decode(pad).decode("utf-8", "ignore")
-                        if "://" in dec:
-                            cand = dec
-                    except Exception:
-                        pass
-                lines = [l.strip() for l in cand.splitlines() if "://" in l.strip()]
-                self.per_url[u] = lines
-                if lines:
-                    out += lines
-                else:
-                    errs += 1
-            except OSError:
-                self.per_url[u] = []
+        self.names = {}
+        # واکشی موازی: با چند سابسکریپشن، زمان رفرش جمع زمان‌ها نیست بلکه کندترینِ آن‌هاست
+        with ThreadPoolExecutor(max_workers=max(1, min(8, len(self.urls)))) as ex:
+            results = list(ex.map(self._fetch, self.urls))
+        for u, (lines, name) in zip(self.urls, results):
+            self.per_url[u] = lines
+            if name:
+                self.names[u] = name
+            if lines:
+                out += lines
+            else:
                 errs += 1
         self.done.emit(out, errs)
 
@@ -1173,11 +1302,14 @@ class ScorpionVPN(QMainWindow):
         top.addWidget(self.add_btn)
         left.addLayout(top)
 
-        self.lst = QListWidget()
-        self.lst.setSpacing(8)
+        self.lst = QTreeWidget()
+        self.lst.setHeaderHidden(True)
+        self.lst.setRootIsDecorated(False)
+        self.lst.setIndentation(16)
         self.lst.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.lst.customContextMenuRequested.connect(self._ctx_menu)
         self.lst.itemSelectionChanged.connect(self._on_select)
+        self.lst.itemClicked.connect(self._on_item_press)
         left.addWidget(self.lst, 1)
         h.addLayout(left, 13)
 
@@ -1336,6 +1468,16 @@ class ScorpionVPN(QMainWindow):
         ov.addWidget(Row(tr("reset"), tr("reset_sub"), danger=True, ctrl=reset_btn))
         cv.addWidget(oth)
 
+        # ── سابسکریپشن‌ها ──
+        cv.addWidget(self._sec(_n("Subscriptions", "سابسکریپشن‌ها")))
+        subw = QWidget()
+        subw.setObjectName("panel")
+        self.subs_layout = QVBoxLayout(subw)
+        self.subs_layout.setContentsMargins(0, 6, 0, 6)
+        self.subs_layout.setSpacing(0)
+        cv.addWidget(subw)
+        self._rebuild_sub_rows()
+
         # ── بروزرسانی ──
         cv.addWidget(self._sec(tr("sec_update")))
         upd = QWidget()
@@ -1482,36 +1624,89 @@ class ScorpionVPN(QMainWindow):
         with open(CONFIGS_FILE, "w", encoding="utf-8") as f:
             json.dump(self.configs, f, ensure_ascii=False)
 
+    def _child_items(self):
+        """(آیتم درخت، uri) همهٔ کانفیگ‌های زیر گروه‌ها."""
+        root = self.lst.invisibleRootItem()
+        for gi in range(root.childCount()):
+            g = root.child(gi)
+            for ci in range(g.childCount()):
+                it = g.child(ci)
+                uri = it.data(0, Qt.ItemDataRole.UserRole)
+                if uri:
+                    yield it, uri
+
+    def _collapsed(self):
+        return set(self.settings.get("collapsed_groups") or [])
+
     def refresh_list(self):
         q = self.search.text().strip().lower()
-        self.lst.clear()
         sel = self._selected_uri()
-        for uri in self.configs:
-            name, sub, sc = describe(uri)
-            if q and q not in name.lower() and q not in sub.lower() and q not in uri.lower():
-                continue
-            item = QListWidgetItem()
-            card = ServerCard(uri, uri == sel)
-            item.setSizeHint(QSize(0, 66))
-            item.setData(Qt.ItemDataRole.UserRole, uri)
-            self.lst.addItem(item)
-            self.lst.setItemWidget(item, card)
+        collapsed = self._collapsed()
+        groups = group_configs(self.configs, self.load_subs(), self._key_of)
+        self.lst.clear()
+        for gname, uris in groups:
+            label = gname if gname else _n("Manual", "دستی")
+            if q:
+                uris = [u for u in uris
+                        if (lambda d: q in d[0].lower() or q in d[1].lower() or q in u.lower())(describe(u))]
+                if not uris:
+                    continue
+            expanded = bool(q) or label not in collapsed
+            head = QTreeWidgetItem()
+            head.setSizeHint(0, QSize(0, 34))
+            head.setData(0, Qt.ItemDataRole.UserRole, label)
+            self.lst.addTopLevelItem(head)
+            self.lst.setItemWidget(head, 0, GroupRow(label, len(uris), expanded))
+            for uri in uris:
+                child = QTreeWidgetItem(head)
+                child.setData(0, Qt.ItemDataRole.UserRole, uri)
+                child.setSizeHint(0, QSize(0, 74))
+                # فاصلهٔ ۸ پیکسلی زیر هر کارت مثل نسخهٔ لیستی
+                wrap = QWidget()
+                wrap.setStyleSheet("background:transparent;")
+                wl = QVBoxLayout(wrap)
+                wl.setContentsMargins(0, 0, 0, 8)
+                wl.setSpacing(0)
+                wl.addWidget(ServerCard(uri, uri == sel))
+                self.lst.setItemWidget(child, 0, wrap)
+            head.setExpanded(expanded)
 
     def _selected_uri(self):
         it = self.lst.currentItem()
-        return it.data(Qt.ItemDataRole.UserRole) if it else None
+        if not it or it.parent() is None:
+            return None
+        return it.data(0, Qt.ItemDataRole.UserRole)
+
+    def _on_item_press(self, it, _col=0):
+        """کلیک روی سربرگ گروه: باز/بسته‌شدن + به‌خاطر سپردن حالت."""
+        if it is None or it.parent() is not None:
+            return
+        label = it.data(0, Qt.ItemDataRole.UserRole) or ""
+        exp = not it.isExpanded()
+        it.setExpanded(exp)
+        hdr = self.lst.itemWidget(it, 0)
+        if hdr is not None:
+            hdr.tri.setText("▾" if exp else "▸")
+        col = self._collapsed()
+        col.discard(label) if exp else col.add(label)
+        self.settings["collapsed_groups"] = sorted(col)
+        self._save_opts()
 
     def _on_select(self):
+        it = self.lst.currentItem()
+        if it is not None and it.parent() is None:
+            return  # سربرگ گروه چیزی را انتخاب نمی‌کند
         uri = self._selected_uri()
         if uri:
             name, sub, _sc = describe(uri)
             self.cur_name.setText(name)
             self.cur_sub.setText(sub)
-        for i in range(self.lst.count()):
-            it = self.lst.item(i)
-            card = self.lst.itemWidget(it)
-            card.selected = it.data(Qt.ItemDataRole.UserRole) == uri
-            card.update()
+        for it2, u2 in self._child_items():
+            wrap = self.lst.itemWidget(it2, 0)
+            card = wrap.findChild(ServerCard) if wrap else None
+            if card is not None:
+                card.selected = u2 == uri
+                card.update()
 
     def open_add(self):
         d = AddDialog(self)
@@ -1556,7 +1751,15 @@ class ScorpionVPN(QMainWindow):
             with open(SUBS_FILE, encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, list):
-                return [s for s in data if isinstance(s, dict) and s.get("url")]
+                out = []
+                for s in data:
+                    if not isinstance(s, dict) or not s.get("url"):
+                        continue
+                    s.setdefault("keys", [])
+                    s.setdefault("deleted", [])
+                    s.setdefault("name", "")
+                    out.append(s)
+                return out
         except (OSError, ValueError):
             pass
         return []
@@ -1595,9 +1798,11 @@ class ScorpionVPN(QMainWindow):
             self.save_subs(subs)
 
     def _select_uri(self, uri):
-        for i in range(self.lst.count()):
-            it = self.lst.item(i)
-            if it and it.data(Qt.ItemDataRole.UserRole) == uri:
+        for it, u in self._child_items():
+            if u == uri:
+                parent = it.parent()
+                if parent is not None:
+                    parent.setExpanded(True)
                 self.lst.setCurrentItem(it)
                 return
 
@@ -1643,7 +1848,7 @@ class ScorpionVPN(QMainWindow):
                 continue
             any_fetched = True
             valid = []
-            for u in lines:
+            for u in _drop_deleted(lines, s.get("deleted"), self._key_of):
                 try:
                     resolve_config(u, self.socks_port, self.http_port)
                     valid.append(u)
@@ -1653,7 +1858,13 @@ class ScorpionVPN(QMainWindow):
                 configs, valid, s.get("keys") or [], self._key_of)
             for k in total:
                 total[k] += stats[k]
-            new_subs.append({"url": url, "keys": keys})
+            names = getattr(self._subw, "names", {}) or {}
+            new_subs.append({
+                "url": url,
+                "keys": keys,
+                "deleted": _prune_deleted(s.get("deleted"), lines, self._key_of),
+                "name": names.get(url) or (s.get("name") or ""),
+            })
         if not any_fetched:
             self._log(tr("refresh_fail"))
             return
@@ -1661,6 +1872,7 @@ class ScorpionVPN(QMainWindow):
         self.save_configs()
         self.save_subs(new_subs)
         self.refresh_list()
+        self._rebuild_sub_rows()
         new_uri = None
         if was_key:
             for u in self.configs:
@@ -1695,14 +1907,54 @@ class ScorpionVPN(QMainWindow):
                 errs += 1
         self.save_configs()
         self._remember_sub_keys()
+        names = getattr(self._subw, "names", {}) or {}
+        if names:
+            subs = self.load_subs()
+            ch = False
+            for s in subs:
+                nm = names.get(s.get("url"))
+                if nm and not s.get("name"):
+                    s["name"] = nm
+                    ch = True
+            if ch:
+                self.save_subs(subs)
         self.refresh_list()
+        self._rebuild_sub_rows()
         self._log(tr("sub_ok", added) + (tr("sub_err", errs) if errs else ""))
+
+    def _tombstone(self, uri):
+        """کلید کانفیگ حذف‌شدهٔ دستی را در سابِ صاحبش ثبت می‌کند تا با رفرش برنگردد."""
+        try:
+            k = self._key_of(uri)
+        except Exception:
+            return
+        subs = self.load_subs()
+        changed = False
+        for s in subs:
+            if k in (s.get("keys") or []) and k not in (s.get("deleted") or []):
+                s["deleted"] = list(s.get("deleted") or []) + [k]
+                changed = True
+        if changed:
+            self.save_subs(subs)
 
     def _ctx_menu(self, pos):
         it = self.lst.itemAt(pos)
         if not it:
             return
-        uri = it.data(Qt.ItemDataRole.UserRole)
+        if it.parent() is None:
+            # منوی سربرگ گروه: حذف کل سابسکریپشن (گروه دستی منو ندارد)
+            label = it.data(0, Qt.ItemDataRole.UserRole) or ""
+            for s in self.load_subs():
+                nm = (s.get("name") or "").strip() or _sub_host(s.get("url", ""))
+                if nm == label:
+                    m = QMenu(self)
+                    act_del = m.addAction(tr("delete"))
+                    ch = m.exec(self.lst.mapToGlobal(pos))
+                    if ch == act_del:
+                        self._delete_sub(s.get("url"))
+                    return
+            return
+        uri = it.data(0, Qt.ItemDataRole.UserRole)
         m = QMenu(self)
         act_copy = m.addAction(tr("copy_link"))
         act_del = m.addAction(tr("delete"))
@@ -1712,9 +1964,69 @@ class ScorpionVPN(QMainWindow):
             self._log(tr("link_copied"))
         elif ch == act_del:
             if uri in self.configs:
+                self._tombstone(uri)
                 self.configs.remove(uri)
             self.save_configs()
             self.refresh_list()
+            self._rebuild_sub_rows()
+
+    # ── مدیریت سابسکریپشن‌ها ──
+    def _rebuild_sub_rows(self):
+        lay = getattr(self, "subs_layout", None)
+        if lay is None:
+            return
+        while lay.count():
+            it = lay.takeAt(0)
+            wdg = it.widget()
+            if wdg is not None:
+                wdg.deleteLater()
+        subs = self.load_subs()
+        if not subs:
+            lay.addWidget(Row(_n("No subscriptions", "سابسکریپشنی ندارید"),
+                              _n("Add one from the servers page", "از صفحهٔ سرورها لینک سابسکریپشن اضافه کنید")))
+            return
+        for s in subs:
+            url = s.get("url", "")
+            nm = (s.get("name") or "").strip() or _sub_host(url)
+            cnt = _count_alive(s, self.configs, self._key_of)
+            btn = QPushButton(tr("delete"))
+            btn.setObjectName("danger")
+            btn.clicked.connect(lambda _c, u=url: self._delete_sub(u))
+            lay.addWidget(Row(nm, "%s · %s" % (_sub_host(url), _n("%d configs" % cnt, "%d کانفیگ" % cnt)),
+                              ctrl=btn))
+
+    def _delete_sub(self, url):
+        if not url:
+            return
+        subs = self.load_subs()
+        s = next((x for x in subs if x.get("url") == url), None)
+        if s is None:
+            return
+        nm = (s.get("name") or "").strip() or _sub_host(url)
+        cnt = _count_alive(s, self.configs, self._key_of)
+        if QMessageBox.question(
+                self, tr("delete"),
+                _n("Delete subscription «%s» and its %d configs?" % (nm, cnt),
+                   "سابسکریپشن «%s» و %d کانفیگش حذف شود؟" % (nm, cnt)),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+        keys = set(s.get("keys") or []) | set(s.get("deleted") or [])
+        subs.remove(s)
+        self.save_subs(subs)
+        kept = []
+        for u in self.configs:
+            try:
+                k = self._key_of(u)
+            except Exception:
+                k = None
+            if k and k in keys:
+                continue
+            kept.append(u)
+        self.configs = kept
+        self.save_configs()
+        self.refresh_list()
+        self._rebuild_sub_rows()
+        self._log(_n("Subscription deleted", "سابسکریپشن حذف شد"))
 
     # ── تایمر اتصال ──
     def open_timer_set(self):
