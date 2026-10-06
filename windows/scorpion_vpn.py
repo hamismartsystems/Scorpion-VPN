@@ -652,6 +652,30 @@ class ServerCard(QWidget):
             b.setObjectName("badge")
             h.addWidget(b)
 
+        # اکشن‌های روی کارت: پینگ + بروزرسانی سابِ این کانفیگ
+        acts = QVBoxLayout()
+        acts.setSpacing(4)
+        self.ping_lbl = QLabel("")
+        self.ping_lbl.setObjectName("sub")
+        self.ping_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.ping_lbl.setFixedHeight(14)
+        acts.addWidget(self.ping_lbl)
+        brow = QHBoxLayout()
+        brow.setSpacing(6)
+        self.ping_btn = QPushButton(tr("ping"))
+        self.ping_btn.setObjectName("flat")
+        self.ping_btn.setFixedSize(52, 26)
+        self.ping_btn.setToolTip(_n("Test this config", "تست این کانفیگ"))
+        self.upd_btn = QPushButton("↻")
+        self.upd_btn.setObjectName("flat")
+        self.upd_btn.setFixedSize(34, 26)
+        self.upd_btn.setToolTip(_n("Update this config's subscription",
+                                   "بروزرسانی سابسکریپشن این کانفیگ"))
+        brow.addWidget(self.ping_btn)
+        brow.addWidget(self.upd_btn)
+        acts.addLayout(brow)
+        h.addLayout(acts)
+
     def paintEvent(self, e):
         super().paintEvent(e)
         if self.selected:
@@ -1668,7 +1692,10 @@ class ScorpionVPN(QMainWindow):
                 wl = QVBoxLayout(wrap)
                 wl.setContentsMargins(0, 0, 0, 8)
                 wl.setSpacing(0)
-                wl.addWidget(ServerCard(uri, uri == sel))
+                card = ServerCard(uri, uri == sel)
+                card.ping_btn.clicked.connect(lambda _c, u=uri: self._ping_one(u))
+                card.upd_btn.clicked.connect(lambda _c, u=uri: self._refresh_one(u))
+                wl.addWidget(card)
                 self.lst.setItemWidget(child, 0, wrap)
             head.setExpanded(expanded)
 
@@ -1797,6 +1824,68 @@ class ScorpionVPN(QMainWindow):
                 changed = True
         if changed:
             self.save_subs(subs)
+
+    # ── تست پینگ و بروزرسانی تکی کانفیگ ──
+    def _host_port_of(self, uri):
+        try:
+            plain = decode_scorpion(uri) if is_scorpion(uri) else uri
+            _scheme, _frag, d = parse_uri(plain)
+            return d.get("host"), int(d.get("port") or 443)
+        except Exception:
+            return None, None
+
+    def _ping_one(self, uri):
+        host, port = self._host_port_of(uri)
+        if not host:
+            self._log(tr("invalid"))
+            return
+        self._set_card_ping(uri, "…")
+        self._ping_workers = [x for x in getattr(self, "_ping_workers", []) if x.isRunning()]
+        w = PingWorker(host, port)
+        self._ping_workers.append(w)
+        w.done.connect(lambda ms, u=uri: self._set_card_ping(u, ms))
+        w.start()
+
+    def _set_card_ping(self, uri, ms):
+        bad = isinstance(ms, int) and ms < 0
+        if bad:
+            txt, col = tr("ping_fail"), "#ff6b6b"
+        elif isinstance(ms, int):
+            txt, col = "%d ms" % ms, ACCENT
+        else:
+            txt, col = str(ms), "#8f98a8"
+        for it, u in self._child_items():
+            if u != uri:
+                continue
+            wrap = self.lst.itemWidget(it, 0)
+            card = wrap.findChild(ServerCard) if wrap else None
+            if card is not None:
+                card.ping_lbl.setText(txt)
+                card.ping_lbl.setStyleSheet("color:%s;" % col)
+
+    def _refresh_sub_url(self, url):
+        if not url:
+            return
+        if getattr(self, "_subw", None) is not None and self._subw.isRunning():
+            return
+        self._log(tr("sub_fetch"))
+        self._refreshing = True
+        self._subw = SubWorker([url])
+        self._subw.done.connect(self._refresh_done)
+        self._subw.start()
+
+    def _refresh_one(self, uri):
+        """فقط سابِ همین کانفیگ را بروزرسانی می‌کند — دیگر نیازی به کپی لینک نیست."""
+        try:
+            k = self._key_of(uri)
+        except Exception:
+            k = None
+        for s in self.load_subs():
+            if k and k in (s.get("keys") or []):
+                self._refresh_sub_url(s.get("url"))
+                return
+        self._log(_n("This config has no subscription",
+                     "این کانفیگ دستی است و سابسکریپشنی برای بروزرسانی ندارد"))
 
     def _select_uri(self, uri):
         for it, u in self._child_items():
@@ -1949,9 +2038,12 @@ class ScorpionVPN(QMainWindow):
                 nm = (s.get("name") or "").strip() or _sub_host(s.get("url", ""))
                 if nm == label:
                     m = QMenu(self)
+                    act_ref = m.addAction(tr("refresh_sub"))
                     act_del = m.addAction(tr("delete"))
                     ch = m.exec(self.lst.mapToGlobal(pos))
-                    if ch == act_del:
+                    if ch == act_ref:
+                        self._refresh_sub_url(s.get("url"))
+                    elif ch == act_del:
                         self._delete_sub(s.get("url"))
                     return
             return
