@@ -51,8 +51,6 @@ interface MainDataSource : Closeable {
 
     suspend fun importSubscriptionFromQr(url: String): Triple<Int, String?, String?>
 
-    fun updateConfigViaSubAll(): SubscriptionUpdateResult    ): Pair<Int, Int>
-
     fun updateConfigViaSubAll(): SubscriptionUpdateResult
     fun updateConfigViaSub(subscriptionCache: SubscriptionCache): SubscriptionUpdateResult
 
