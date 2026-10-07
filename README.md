@@ -2,6 +2,8 @@
 
 # 🦂 Scorpion VPN
 
+**[English README](README.en.md)**
+
 کلاینت VPN اختصاصی **HAMI SMART SYSTEMS / حامی دیزاینز** — برای ویندوز، اندروید، مک و لینوکس. بر پایه هسته‌های **Xray** و **sing-box**، با پشتیبانی کامل از پروتکل‌های روز:
 
 **VLESS / VMess / Trojan / Shadowsocks / Hysteria2 / TUIC / AnyTLS + Reality / XHTTP / gRPC / HTTPUpgrade**
