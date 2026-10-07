@@ -206,6 +206,54 @@ object AngConfigManager {
         }
     }
 
+
+    /**
+     * Scorpion: robust subscription entry for QR-scanned subscription links.
+     *
+     * The shared update path can silently drag the fetch through a stale local
+     * proxy port (e.g. another VPN client still bound on 127.0.0.1:10809) and
+     * then fail without any visible reason. Here we always fetch DIRECTLY with
+     * an explicit timeout and propagate the exact failure reason to the UI.
+     *
+     * Returns Triple(configCount, errorMessage, groupGuid).
+     */
+    fun importSubscriptionFromQr(rawUrl: String?): Triple<Int, String?, String?> {
+        val clean = rawUrl?.trim().orEmpty()
+        if (!Utils.isValidSubUrl(clean)) {
+            return Triple(0, "Invalid subscription link", null)
+        }
+        try {
+            importUrlAsSubscription(clean)
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "Failed to store scanned subscription", e)
+            return Triple(0, "Failed to save subscription", null)
+        }
+        val cache = MmkvManager.decodeSubscriptions()
+            .firstOrNull { it.subscription.url == clean }
+            ?: return Triple(0, "Subscription was not stored", null)
+        return try {
+            val content = HttpUtil.getUrlContentWithUserAgent(
+                UrlContentRequest(url = clean, timeout = 20000, httpPort = 0)
+            )
+            if (content.isEmpty()) {
+                Triple(0, "Server returned empty content", cache.guid)
+            } else {
+                val count = parseConfigViaSub(content, cache.guid, false)
+                if (count > 0) {
+                    cache.subscription.lastUpdated = System.currentTimeMillis()
+                    MmkvManager.encodeSubscription(cache.guid, cache.subscription)
+                    LogUtil.i(AppConfig.TAG, "Scorpion QR import: $count configs into ${cache.guid}")
+                    Triple(count, null, cache.guid)
+                } else {
+                    Triple(0, "No valid config found in subscription body", cache.guid)
+                }
+            }
+        } catch (e: Exception) {
+            LogUtil.e(AppConfig.TAG, "Scorpion QR import: direct fetch failed", e)
+            Triple(0, "Fetch failed: ${e.javaClass.simpleName} ${e.message}", cache.guid)
+        }
+    }
+
     /**
      * Parses a batch of subscriptions.
      *

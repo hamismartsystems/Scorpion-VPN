@@ -217,7 +217,12 @@ class MainActivity : HelperBaseComponentActivity() {
     private fun importQRcode() {
         launchQRCodeScanner { scanResult ->
             if (scanResult != null) {
-                mainViewModel.onAction(MainAction.ImportBatchConfig(scanResult))
+                val trimmed = scanResult.trim()
+                if (trimmed.startsWith("http", ignoreCase = true)) {
+                    mainViewModel.onAction(MainAction.ImportSubFromQr(trimmed))
+                } else {
+                    mainViewModel.onAction(MainAction.ImportBatchConfig(scanResult))
+                }
             }
         }
     }

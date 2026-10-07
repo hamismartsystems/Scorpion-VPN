@@ -192,6 +192,9 @@ class MainRepository(
         updateUI: Boolean
     ): Pair<Int, Int> = AngConfigManager.importBatchConfig(server, subscriptionId, updateUI)
 
+    override suspend fun importSubscriptionFromQr(url: String): Triple<Int, String?, String?> =
+        AngConfigManager.importSubscriptionFromQr(url)
+
     override fun updateConfigViaSubAll(): SubscriptionUpdateResult =
         AngConfigManager.updateConfigViaSubAll()
 

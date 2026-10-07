@@ -290,6 +290,7 @@ class MainViewModel(
             is MainAction.RemoveServer -> removeServerAndRefresh(action.guid)
             is MainAction.Search -> filterConfig(action.query)
             is MainAction.ImportBatchConfig -> importBatchConfig(action.configText)
+            is MainAction.ImportSubFromQr -> importSubFromQr(action.url)
             MainAction.LocateHandled -> consumeLocateTarget()
             is MainAction.ShareQRCode -> {
                 val bitmap = dataSource.share2QRCode(action.guid)
@@ -503,6 +504,24 @@ class MainViewModel(
                 }
             }
         }.also { setupGroupJob = it }
+    }
+
+
+    private fun importSubFromQr(url: String) {
+        launchLoading {
+            val (count, error, groupGuid) = withContext(ioDispatcher) {
+                dataSource.importSubscriptionFromQr(url)
+            }
+            if (!groupGuid.isNullOrEmpty()) {
+                dataSource.setSelectedSubscriptionId(groupGuid)
+            }
+            if (count > 0) {
+                toast(dataSource.getString(R.string.title_import_config_count, count))
+            } else {
+                toast(error ?: dataSource.getString(R.string.toast_failure))
+            }
+            setupGroupTab(forceRefresh = true)
+        }
     }
 
     // ---------- Business actions (coroutine-based) ----------

@@ -48,6 +48,7 @@ sealed interface MainAction {
     data object ExportAll : MainAction
 
     data object ImportQRcode : MainAction
+    data class ImportSubFromQr(val url: String) : MainAction
     data object ImportClipboard : MainAction
     data object ImportConfigLocal : MainAction
     data class ImportManually(val type: Int) : MainAction
