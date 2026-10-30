@@ -15,6 +15,7 @@ except Exception:
 from scorpion_i18n import tr, set_lang, LANG
 import scorpion_i18n as _i18n
 from scorpion_sub import config_key, merge_subscription
+from scorpion_tun_rules import build_singbox_config, normalize_apps, RuleError
 
 # ───────────────────────── ۱) قالب اختصاصی scorpion:// ─────────────────────────
 MAGIC = "scorpion://v1."
@@ -206,6 +207,17 @@ def resource_path(name):
 
 
 XRAY_PATH = resource_path("xray.exe") if os.name == "nt" else resource_path("xray")
+SINGBOX_PATH = resource_path("sing-box.exe") if os.name == "nt" else resource_path("sing-box")
+
+
+def is_admin():
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
 ICON_PATH = resource_path("scorpion_icon.png")
 ICO_PATH = resource_path("scorpion.ico")
 CONFIGS_FILE = os.path.join(APP_DIR, "scorpion_configs.json")
@@ -1465,6 +1477,20 @@ class ScorpionVPN(QMainWindow):
         self.sw_lan = Switch(bool(self.settings.get("lan", False)))
         tv.addWidget(Row(tr("lan"), tr("lan_sub"), ctrl=self.sw_lan))
 
+        self.sw_tun = Switch(bool(self.settings.get("tun_mode", False)))
+        tv.addWidget(Row("TUN per-app mode", "Apps in the list below bypass the VPN. Needs Administrator.", ctrl=self.sw_tun))
+
+        ex_add = QPushButton("Add")
+        ex_add.setObjectName("flat")
+        ex_add.clicked.connect(self.add_excluded_apps)
+        ex_clear = QPushButton("Clear")
+        ex_clear.setObjectName("flat")
+        ex_clear.clicked.connect(self.clear_excluded_apps)
+        ex_row = Row("Apps without VPN", None)
+        ex_row.add(ex_add)
+        ex_row.add(ex_clear)
+        tv.addWidget(ex_row)
+
         self.ports_lbl = QLabel("SOCKS %d  /  HTTP %d" % (self.socks_port, self.http_port))
         self.ports_lbl.setObjectName("pinfo")
         ports_btn = QPushButton(tr("change"))
@@ -1568,6 +1594,7 @@ class ScorpionVPN(QMainWindow):
 
         # اتصال سیگنال‌ها بعد از آماده‌شدن همه‌ی اجزا
         self.sw_frag.toggled.connect(self._save_opts)
+        self.sw_tun.toggled.connect(self._save_opts)
         self.sw_mux.toggled.connect(self._save_opts)
         self.sw_lan.toggled.connect(self._save_opts)
         self.sw_autoupd.toggled.connect(self._save_opts)
@@ -1580,11 +1607,31 @@ class ScorpionVPN(QMainWindow):
         l.setObjectName("sec")
         return l
 
+    def add_excluded_apps(self):
+        from PyQt6.QtWidgets import QFileDialog
+        files, _ = QFileDialog.getOpenFileNames(self, "Apps that should NOT use the VPN", "", "Programs (*.exe)")
+        if not files:
+            return
+        names = list(self.settings.get("excluded_apps", [])) + [os.path.basename(f) for f in files]
+        try:
+            self.settings["excluded_apps"] = normalize_apps(names)
+        except RuleError as e:
+            QMessageBox.critical(self, "Scorpion VPN", str(e))
+            return
+        self._save_opts()
+        self._log("Apps without VPN: " + (", ".join(self.settings["excluded_apps"]) or "none"))
+
+    def clear_excluded_apps(self):
+        self.settings["excluded_apps"] = []
+        self._save_opts()
+        self._log("Apps without VPN: none")
+
     def _save_opts(self, *_):
         self.settings.update({"frag": self.sw_frag.isChecked(),
                               "mux": self.sw_mux.isChecked(),
                               "ip_type": "4" if self.cb_ip.currentIndex() == 0 else "6",
                               "lan": self.sw_lan.isChecked(),
+                              "tun_mode": self.sw_tun.isChecked(),
                               "sys_proxy": self.cb_live.isChecked(),
                               "auto_update": self.sw_autoupd.isChecked(),
                               "socks_port": self.socks_port,
@@ -2209,7 +2256,12 @@ class ScorpionVPN(QMainWindow):
             QMessageBox.critical(self, tr("error"), tr("xray_run", e))
             return
         self.connected_uri = self._selected_uri()
-        if self.cb_live.isChecked():
+        if self.settings.get("tun_mode"):
+            if not self._start_tun():
+                self.disconnect_xray()
+                return
+            self.proxy_info.setText("TUN per-app  •  SOCKS5 127.0.0.1:%d" % self.socks_port)
+        elif self.cb_live.isChecked():
             set_system_proxy(True, "127.0.0.1:%d" % self.http_port)
             self.proxy_info.setText("HTTP 127.0.0.1:%d  •  SOCKS5 127.0.0.1:%d" % (self.http_port, self.socks_port))
         self.power.connected = True
@@ -2225,7 +2277,40 @@ class ScorpionVPN(QMainWindow):
         else:
             self._log(tr("connected_log"))
 
+    def _start_tun(self):
+        if not is_admin():
+            QMessageBox.critical(self, "Scorpion VPN", "TUN mode needs Administrator rights. Start the app as Administrator.")
+            return False
+        if not os.path.exists(SINGBOX_PATH):
+            QMessageBox.critical(self, "Scorpion VPN", "sing-box.exe was not found next to the app.")
+            return False
+        try:
+            cfg = build_singbox_config(self.settings.get("excluded_apps", []), self.socks_port)
+        except RuleError as e:
+            QMessageBox.critical(self, "Scorpion VPN", str(e))
+            return False
+        fd, path = tempfile.mkstemp(suffix=".json", prefix="scorpion_tun_")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False)
+        flags = 0x08000000 if os.name == "nt" else 0
+        try:
+            self.tun_proc = subprocess.Popen([SINGBOX_PATH, "run", "-c", path],
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                             creationflags=flags)
+        except OSError as e:
+            QMessageBox.critical(self, "Scorpion VPN", str(e))
+            return False
+        return True
+
     def disconnect_xray(self):
+        tp = getattr(self, "tun_proc", None)
+        if tp:
+            tp.terminate()
+            try:
+                tp.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                tp.kill()
+            self.tun_proc = None
         if self.proc:
             self.proc.terminate()
             try:
