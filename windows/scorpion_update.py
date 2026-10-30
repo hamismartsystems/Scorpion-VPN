@@ -17,7 +17,7 @@ import urllib.request
 
 SITE = "https://hamidesigns.shop"
 MANIFEST_URL = SITE + "/apps/update.json"
-APP_VERSION = "1.4.3"
+APP_VERSION = "1.4.5"
 USER_AGENT = "ScorpionVPN-Windows"
 
 
