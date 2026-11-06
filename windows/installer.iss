@@ -5,21 +5,21 @@
 
 [Setup]
 AppName=Scorpion VPN
-AppVersion=1.4.1
-AppPublisher=HamiDesigns (حمیدیزاینز)
+AppVersion=1.4.5
+AppPublisher=HamiSmartSystems
 AppComments=Scorpion VPN - Secure Proxy Client - Icon Fix
 AppSupportURL=https://hamidesigns.shop
 AppUpdatesURL=https://hamidesigns.shop/apps/
 DefaultDirName={autopf}\ScorpionVPN
 DefaultGroupName=Scorpion VPN
-OutputBaseFilename=ScorpionVPN-Setup-1.4.1
+OutputBaseFilename=ScorpionVPN-Setup-1.4.5
 SetupIconFile=scorpion.ico
-VersionInfoVersion=1.4.1
+VersionInfoVersion=1.4.5
 VersionInfoCompany=HAMI SMART SYSTEMS
-VersionInfoDescription=Scorpion VPN 1.4.1 - Taskbar Icon Root Fix
+VersionInfoDescription=Scorpion VPN 1.4.5 - TUN per-app with app list
 VersionInfoCopyright=Copyright (c) 2026 HAMI SMART SYSTEMS
 VersionInfoProductName=Scorpion VPN
-VersionInfoProductVersion=1.4.1
+VersionInfoProductVersion=1.4.5
 UninstallDisplayIcon={app}\Scorpion VPN.exe
 UninstallDisplayName=Scorpion VPN
 ArchitecturesAllowed=x64

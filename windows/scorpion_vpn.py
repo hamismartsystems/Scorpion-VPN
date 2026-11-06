@@ -15,6 +15,8 @@ except Exception:
 from scorpion_i18n import tr, set_lang, LANG
 import scorpion_i18n as _i18n
 from scorpion_sub import config_key, merge_subscription
+from scorpion_tun_rules import (build_singbox_config, normalize_apps, add_rule, set_enabled,
+                                delete_rule, enabled_names, rules_from_settings, RuleError)
 
 # ───────────────────────── ۱) قالب اختصاصی scorpion:// ─────────────────────────
 MAGIC = "scorpion://v1."
@@ -206,6 +208,17 @@ def resource_path(name):
 
 
 XRAY_PATH = resource_path("xray.exe") if os.name == "nt" else resource_path("xray")
+SINGBOX_PATH = resource_path("sing-box.exe") if os.name == "nt" else resource_path("sing-box")
+
+
+def is_admin():
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
 ICON_PATH = resource_path("scorpion_icon.png")
 ICO_PATH = resource_path("scorpion.ico")
 CONFIGS_FILE = os.path.join(APP_DIR, "scorpion_configs.json")
@@ -391,7 +404,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QH
                              QLabel, QLineEdit, QPushButton,
                              QTextEdit, QMessageBox, QStackedWidget, QSpinBox, QCheckBox,
                              QDialog, QMenu, QScrollArea, QComboBox, QInputDialog,
-                             QTreeWidget, QTreeWidgetItem)
+                             QTreeWidget, QTreeWidgetItem, QListWidget, QAbstractItemView)
 
 ACCENT = "#00e07a"
 BG = "#0f1115"
@@ -652,30 +665,6 @@ class ServerCard(QWidget):
             b.setObjectName("badge")
             h.addWidget(b)
 
-        # اکشن‌های روی کارت: پینگ + بروزرسانی سابِ این کانفیگ
-        acts = QVBoxLayout()
-        acts.setSpacing(4)
-        self.ping_lbl = QLabel("")
-        self.ping_lbl.setObjectName("sub")
-        self.ping_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.ping_lbl.setFixedHeight(14)
-        acts.addWidget(self.ping_lbl)
-        brow = QHBoxLayout()
-        brow.setSpacing(6)
-        self.ping_btn = QPushButton(tr("ping"))
-        self.ping_btn.setObjectName("flat")
-        self.ping_btn.setFixedSize(52, 26)
-        self.ping_btn.setToolTip(_n("Test this config", "تست این کانفیگ"))
-        self.upd_btn = QPushButton("↻")
-        self.upd_btn.setObjectName("flat")
-        self.upd_btn.setFixedSize(34, 26)
-        self.upd_btn.setToolTip(_n("Update this config's subscription",
-                                   "بروزرسانی سابسکریپشن این کانفیگ"))
-        brow.addWidget(self.ping_btn)
-        brow.addWidget(self.upd_btn)
-        acts.addLayout(brow)
-        h.addLayout(acts)
-
     def paintEvent(self, e):
         super().paintEvent(e)
         if self.selected:
@@ -930,7 +919,7 @@ class SubWorker(QThread):
     def _fetch(u):
         """(خطوط کانفیگ، نام ساب از Profile-Title) برای یک آدرس — به‌موازات بقیه اجرا می‌شود."""
         try:
-            req = ureq.Request(u, headers={"User-Agent": "ScorpionVPN/1.4.0"})
+            req = ureq.Request(u, headers={"User-Agent": "ScorpionVPN/1.4.5"})
             with ureq.urlopen(req, timeout=20) as r:
                 data = r.read()
                 name = (r.headers.get("Profile-Title") or "").strip()
@@ -1465,6 +1454,36 @@ class ScorpionVPN(QMainWindow):
         self.sw_lan = Switch(bool(self.settings.get("lan", False)))
         tv.addWidget(Row(tr("lan"), tr("lan_sub"), ctrl=self.sw_lan))
 
+        self.sw_tun = Switch(bool(self.settings.get("tun_mode", False)))
+        tv.addWidget(Row("TUN per-app mode", "Apps in the list below bypass the VPN. Needs Administrator.", ctrl=self.sw_tun))
+
+        ex_add = QPushButton("Add")
+        ex_add.setObjectName("flat")
+        ex_add.clicked.connect(self.add_excluded_apps)
+        ex_row = Row("Apps without VPN", "Green box = bypass VPN (direct). Remove = delete the app from this list. Reconnect after changes.")
+        ex_row.add(ex_add)
+        tv.addWidget(ex_row)
+        self.ex_scroll = QScrollArea()
+        self.ex_scroll.setWidgetResizable(True)
+        self.ex_scroll.setFixedHeight(240)
+        self.ex_scroll.setStyleSheet("QScrollArea{border:none;background:transparent;}"
+                                     "QWidget#exbox{background:transparent;}"
+                                     "QWidget#exrow{background:#141a22;border:1px solid #232a36;border-radius:10px;}"
+                                     "QLabel{color:#e6edf3;background:transparent;}"
+                                     "QLabel#pinfo{color:#7d8794;font-size:11px;}"
+                                     "QLabel#cname{font-size:13px;font-weight:600;}"
+                                     "QWidget#exrow QLabel{background:transparent;}"
+                                     "QWidget#exrow QPushButton#exRemove{background:#2a1515;color:#ff6b6b;border:1px solid #6b2f2f;border-radius:8px;padding:4px 12px;font-size:12px;font-weight:bold;}"
+                                     "QWidget#exrow QPushButton#exRemove:hover{background:#3a1f26;border-color:#ff6b6b;}")
+        self.ex_box_w = QWidget()
+        self.ex_box_w.setObjectName("exbox")
+        self.ex_box = QVBoxLayout(self.ex_box_w)
+        self.ex_box.setContentsMargins(18, 4, 18, 8)
+        self.ex_box.setSpacing(6)
+        self.ex_scroll.setWidget(self.ex_box_w)
+        tv.addWidget(self.ex_scroll)
+        self._refresh_excluded_list()
+
         self.ports_lbl = QLabel("SOCKS %d  /  HTTP %d" % (self.socks_port, self.http_port))
         self.ports_lbl.setObjectName("pinfo")
         ports_btn = QPushButton(tr("change"))
@@ -1568,6 +1587,7 @@ class ScorpionVPN(QMainWindow):
 
         # اتصال سیگنال‌ها بعد از آماده‌شدن همه‌ی اجزا
         self.sw_frag.toggled.connect(self._save_opts)
+        self.sw_tun.toggled.connect(self._save_opts)
         self.sw_mux.toggled.connect(self._save_opts)
         self.sw_lan.toggled.connect(self._save_opts)
         self.sw_autoupd.toggled.connect(self._save_opts)
@@ -1580,11 +1600,99 @@ class ScorpionVPN(QMainWindow):
         l.setObjectName("sec")
         return l
 
+    def _app_icon(self, path):
+        from PyQt6.QtWidgets import QFileIconProvider, QStyle
+        from PyQt6.QtCore import QFileInfo
+        if path and os.path.exists(path):
+            ic = QFileIconProvider().icon(QFileInfo(path))
+            if not ic.isNull():
+                return ic
+        return QApplication.style().standardIcon(QStyle.StandardPixmap.SP_FileIcon)
+
+    def _make_excluded_row(self, rule):
+        from PyQt6.QtWidgets import QCheckBox
+        name = rule["name"]
+        w = QWidget()
+        w.setObjectName("exrow")
+        h = QHBoxLayout(w)
+        h.setContentsMargins(12, 8, 12, 8)
+        h.setSpacing(12)
+        cb = QCheckBox()
+        cb.setChecked(bool(rule.get("enabled", True)))
+        cb.setToolTip("Tick: this app goes direct (no VPN). Untick: this app goes through the VPN.")
+        cb.toggled.connect(lambda on, n=name: self._set_app_enabled(n, on))
+        icon = QLabel()
+        icon.setPixmap(self._app_icon(rule.get("path", "")).pixmap(32, 32))
+        col = QVBoxLayout()
+        col.setSpacing(0)
+        t = QLabel(name)
+        t.setObjectName("cname")
+        sub = QLabel(rule.get("path") or "path unknown")
+        sub.setObjectName("pinfo")
+        col.addWidget(t)
+        col.addWidget(sub)
+        rm = QPushButton("Remove")
+        rm.setObjectName("exRemove")
+        rm.setMinimumWidth(84)
+        rm.setFixedHeight(30)
+        rm.setToolTip("Remove this app from the list")
+        rm.clicked.connect(lambda _=False, n=name: self._delete_app_rule(n))
+        h.addWidget(cb)
+        h.addWidget(icon)
+        h.addLayout(col, 1)
+        h.addWidget(rm)
+        return w
+
+    def _refresh_excluded_list(self):
+        while self.ex_box.count():
+            it = self.ex_box.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+        rules = rules_from_settings(self.settings)
+        if not rules:
+            e = QLabel("No apps yet. Click Add and choose the apps that should bypass the VPN.")
+            e.setObjectName("pinfo")
+            self.ex_box.addWidget(e)
+        for r in rules:
+            self.ex_box.addWidget(self._make_excluded_row(r))
+        self.ex_box.addStretch(1)
+
+    def _store_rules(self, rules):
+        self.settings["app_rules"] = rules
+        self.settings["excluded_apps"] = enabled_names(rules)
+        self._refresh_excluded_list()
+        self._save_opts()
+        apps = enabled_names(rules)
+        self._log("Apps without VPN: " + (", ".join(apps) or "none"))
+        if self.proc:
+            self._log("Reconnect to apply the change.")
+
+    def _set_app_enabled(self, name, on):
+        self._store_rules(set_enabled(rules_from_settings(self.settings), name, on))
+
+    def _delete_app_rule(self, name):
+        self._store_rules(delete_rule(rules_from_settings(self.settings), name))
+
+    def add_excluded_apps(self):
+        from PyQt6.QtWidgets import QFileDialog
+        files, _ = QFileDialog.getOpenFileNames(self, "Apps that should NOT use the VPN", "", "Programs (*.exe)")
+        if not files:
+            return
+        rules = rules_from_settings(self.settings)
+        try:
+            for f in files:
+                rules = add_rule(rules, f, path=f)
+        except RuleError as e:
+            QMessageBox.critical(self, "Scorpion VPN", str(e))
+            return
+        self._store_rules(rules)
+
     def _save_opts(self, *_):
         self.settings.update({"frag": self.sw_frag.isChecked(),
                               "mux": self.sw_mux.isChecked(),
                               "ip_type": "4" if self.cb_ip.currentIndex() == 0 else "6",
                               "lan": self.sw_lan.isChecked(),
+                              "tun_mode": self.sw_tun.isChecked(),
                               "sys_proxy": self.cb_live.isChecked(),
                               "auto_update": self.sw_autoupd.isChecked(),
                               "socks_port": self.socks_port,
@@ -1620,6 +1728,7 @@ class ScorpionVPN(QMainWindow):
         self.configs = []
         self.save_configs()
         self.settings = {}
+        self._refresh_excluded_list()
         try:
             os.remove(SETTINGS_FILE)
         except OSError:
@@ -1692,10 +1801,7 @@ class ScorpionVPN(QMainWindow):
                 wl = QVBoxLayout(wrap)
                 wl.setContentsMargins(0, 0, 0, 8)
                 wl.setSpacing(0)
-                card = ServerCard(uri, uri == sel)
-                card.ping_btn.clicked.connect(lambda _c, u=uri: self._ping_one(u))
-                card.upd_btn.clicked.connect(lambda _c, u=uri: self._refresh_one(u))
-                wl.addWidget(card)
+                wl.addWidget(ServerCard(uri, uri == sel))
                 self.lst.setItemWidget(child, 0, wrap)
             head.setExpanded(expanded)
 
@@ -1824,68 +1930,6 @@ class ScorpionVPN(QMainWindow):
                 changed = True
         if changed:
             self.save_subs(subs)
-
-    # ── تست پینگ و بروزرسانی تکی کانفیگ ──
-    def _host_port_of(self, uri):
-        try:
-            plain = decode_scorpion(uri) if is_scorpion(uri) else uri
-            _scheme, _frag, d = parse_uri(plain)
-            return d.get("host"), int(d.get("port") or 443)
-        except Exception:
-            return None, None
-
-    def _ping_one(self, uri):
-        host, port = self._host_port_of(uri)
-        if not host:
-            self._log(tr("invalid"))
-            return
-        self._set_card_ping(uri, "…")
-        self._ping_workers = [x for x in getattr(self, "_ping_workers", []) if x.isRunning()]
-        w = PingWorker(host, port)
-        self._ping_workers.append(w)
-        w.done.connect(lambda ms, u=uri: self._set_card_ping(u, ms))
-        w.start()
-
-    def _set_card_ping(self, uri, ms):
-        bad = isinstance(ms, int) and ms < 0
-        if bad:
-            txt, col = tr("ping_fail"), "#ff6b6b"
-        elif isinstance(ms, int):
-            txt, col = "%d ms" % ms, ACCENT
-        else:
-            txt, col = str(ms), "#8f98a8"
-        for it, u in self._child_items():
-            if u != uri:
-                continue
-            wrap = self.lst.itemWidget(it, 0)
-            card = wrap.findChild(ServerCard) if wrap else None
-            if card is not None:
-                card.ping_lbl.setText(txt)
-                card.ping_lbl.setStyleSheet("color:%s;" % col)
-
-    def _refresh_sub_url(self, url):
-        if not url:
-            return
-        if getattr(self, "_subw", None) is not None and self._subw.isRunning():
-            return
-        self._log(tr("sub_fetch"))
-        self._refreshing = True
-        self._subw = SubWorker([url])
-        self._subw.done.connect(self._refresh_done)
-        self._subw.start()
-
-    def _refresh_one(self, uri):
-        """فقط سابِ همین کانفیگ را بروزرسانی می‌کند — دیگر نیازی به کپی لینک نیست."""
-        try:
-            k = self._key_of(uri)
-        except Exception:
-            k = None
-        for s in self.load_subs():
-            if k and k in (s.get("keys") or []):
-                self._refresh_sub_url(s.get("url"))
-                return
-        self._log(_n("This config has no subscription",
-                     "این کانفیگ دستی است و سابسکریپشنی برای بروزرسانی ندارد"))
 
     def _select_uri(self, uri):
         for it, u in self._child_items():
@@ -2038,12 +2082,9 @@ class ScorpionVPN(QMainWindow):
                 nm = (s.get("name") or "").strip() or _sub_host(s.get("url", ""))
                 if nm == label:
                     m = QMenu(self)
-                    act_ref = m.addAction(tr("refresh_sub"))
                     act_del = m.addAction(tr("delete"))
                     ch = m.exec(self.lst.mapToGlobal(pos))
-                    if ch == act_ref:
-                        self._refresh_sub_url(s.get("url"))
-                    elif ch == act_del:
+                    if ch == act_del:
                         self._delete_sub(s.get("url"))
                     return
             return
@@ -2209,7 +2250,12 @@ class ScorpionVPN(QMainWindow):
             QMessageBox.critical(self, tr("error"), tr("xray_run", e))
             return
         self.connected_uri = self._selected_uri()
-        if self.cb_live.isChecked():
+        if self.settings.get("tun_mode"):
+            if not self._start_tun():
+                self.disconnect_xray()
+                return
+            self.proxy_info.setText("TUN per-app  •  SOCKS5 127.0.0.1:%d" % self.socks_port)
+        elif self.cb_live.isChecked():
             set_system_proxy(True, "127.0.0.1:%d" % self.http_port)
             self.proxy_info.setText("HTTP 127.0.0.1:%d  •  SOCKS5 127.0.0.1:%d" % (self.http_port, self.socks_port))
         self.power.connected = True
@@ -2225,7 +2271,40 @@ class ScorpionVPN(QMainWindow):
         else:
             self._log(tr("connected_log"))
 
+    def _start_tun(self):
+        if not is_admin():
+            QMessageBox.critical(self, "Scorpion VPN", "TUN mode needs Administrator rights. Start the app as Administrator.")
+            return False
+        if not os.path.exists(SINGBOX_PATH):
+            QMessageBox.critical(self, "Scorpion VPN", "sing-box.exe was not found next to the app.")
+            return False
+        try:
+            cfg = build_singbox_config(enabled_names(rules_from_settings(self.settings)), self.socks_port)
+        except RuleError as e:
+            QMessageBox.critical(self, "Scorpion VPN", str(e))
+            return False
+        fd, path = tempfile.mkstemp(suffix=".json", prefix="scorpion_tun_")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False)
+        flags = 0x08000000 if os.name == "nt" else 0
+        try:
+            self.tun_proc = subprocess.Popen([SINGBOX_PATH, "run", "-c", path],
+                                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                             creationflags=flags)
+        except OSError as e:
+            QMessageBox.critical(self, "Scorpion VPN", str(e))
+            return False
+        return True
+
     def disconnect_xray(self):
+        tp = getattr(self, "tun_proc", None)
+        if tp:
+            tp.terminate()
+            try:
+                tp.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                tp.kill()
+            self.tun_proc = None
         if self.proc:
             self.proc.terminate()
             try:
